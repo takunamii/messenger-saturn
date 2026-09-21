@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+    color-scheme: dark;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: #0e1621;
+}
+
+/* Веб-приложение: выделение текста только там, где нужно */
+body {
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+input,
+textarea,
+.selectable {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+::selection {
+    background: rgba(88, 101, 242, 0.55);
+    color: #fff;
+}
+
+/* Тонкие скроллбары в стиле Discord */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+*::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+/* Подсветка при переходе к закреплённому сообщению */
+@keyframes msg-highlight-fade {
+    0% { background-color: rgba(232, 163, 61, 0.22); }
+    100% { background-color: transparent; }
+}
+
+.msg-highlight {
+    animation: msg-highlight-fade 1.6s ease-out;
+    border-radius: 12px;
+}

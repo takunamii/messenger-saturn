@@ -1,0 +1,10 @@
+[build]
+  base = "client"
+  command = "npm run build"
+  publish = "dist"
+
+# SPA: serve index.html for all routes (react-router)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
