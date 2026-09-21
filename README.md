@@ -1,5 +1,7 @@
 # Saturn — деплой и запуск
 
+https://messenger-saturn.netlify.app/
+
 ## Структура
 - `client/` — React (Vite) фронтенд
 - `server/` — Express + JWT + SQLite бэкенд
