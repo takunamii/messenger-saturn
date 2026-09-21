@@ -30,10 +30,7 @@ const AuthLayout: React.FC<{ title: string; subtitle: string; children: React.Re
             <div className="w-full max-w-md relative">
                 <div className="bg-[#17212b] rounded-2xl shadow-2xl overflow-hidden border border-white/5">
                     <div className="px-8 pt-10 pb-8 flex flex-col items-center">
-                        <div className="w-16 h-16 rounded-2xl bg-[#222d3d] flex items-center justify-center mb-4 shadow-lg shadow-black/30">
-                            <SaturnLogo size={38} />
-                        </div>
-                        <h1 className="text-white text-2xl font-bold tracking-wide">Saturn</h1>
+                        <SaturnLogo size={64} />                        <h1 className="text-white text-2xl font-bold tracking-wide">Saturn</h1>
                         <p className="text-[#8f9aa7] text-sm mt-1.5">{subtitle}</p>
                         <span className="sr-only">{title}</span>
                     </div>

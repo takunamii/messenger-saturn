@@ -1,10 +1,13 @@
 import * as React from 'react';
-import { getMessages, sendMessage, getPartnerStatus, sendAttachment, getChatMedia, forwardMessage, deleteMessage, getChats, getPinnedMessages, pinMessage, unpinMessage } from '../sidebar/usersearch/api/api';
+import { getMessages, sendMessage, getPartnerStatus, sendAttachment, getChatMedia, forwardMessage, deleteMessage, getChats, getPinnedMessages, pinMessage, unpinMessage, markChatRead } from '../sidebar/usersearch/api/api';
 import type { ChatMessage, PublicUserStatus, ChatAttachment } from '../sidebar/usersearch/api/api';
 import type { Chat as ChatListItem } from '../sidebar/Sidebar';
 import Avatar from '../../../components/Avatar';
+import VoicePlayer from '../../../components/VoicePlayer';
+import DeleteConfirmModal from '../../../components/DeleteConfirmModal';
 import { formatLastSeen } from '../../../utils/formatLastSeen';
 import { assetUrl } from '../../../utils/assetUrl';
+import { socket, useSocketEvents } from '../../../utils/socket';
 
 interface Message {
     id: string;
@@ -30,11 +33,13 @@ const ChatHeader: React.FC<{
     chatName: string;
     onBack?: () => void;
     status?: { text: string; online: boolean } | null;
+    partnerTyping?: null | 'typing' | 'recording';
     onOpenPartnerProfile?: () => void;
     onToggleInfo: () => void;
     partnerAvatar?: string | null;
     infoOpen?: boolean;
-}> = ({ chatName, onBack, status, onOpenPartnerProfile, onToggleInfo, partnerAvatar, infoOpen }) => {
+}> = ({ chatName, onBack, status, partnerTyping, onOpenPartnerProfile, onToggleInfo, partnerAvatar, infoOpen }) => {
+    const isOnline = status?.online || !!partnerTyping;
     return (
         <div className="flex items-center justify-between px-2 sm:px-4 h-[60px] bg-[#17212b] border-b border-black/30 shrink-0">
             <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-1">
@@ -51,19 +56,40 @@ const ChatHeader: React.FC<{
                 )}
                 <button
                     onClick={onOpenPartnerProfile}
-                    className="shrink-0 rounded-full focus:outline-none transition-transform active:scale-95 cursor-pointer"
+                    className="relative shrink-0 rounded-full focus:outline-none transition-transform active:scale-95 cursor-pointer"
                     title="Открыть профиль"
                     aria-label="Открыть профиль собеседника"
                 >
                     <Avatar name={chatName} src={partnerAvatar || undefined} size={38} className="ring-2 ring-transparent hover:ring-[#5865F2] transition-all" />
+                    {isOnline && (
+                        <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-[#17212b]" title="онлайн" />
+                    )}
                 </button>
                 <div className="min-w-0">
                     <h2 className="text-white font-medium truncate selectable">{chatName}</h2>
-                    {status?.text ? (
-                        <p className={`text-xs truncate flex items-center gap-1.5 ${status.online ? 'text-[#8ea1ff]' : 'text-[#8f9aa7]'}`}>
-                            {status.online && <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block shrink-0" />}
-                            {status.text}
-                        </p>
+                    {partnerTyping ? (
+                        partnerTyping === 'recording' ? (
+                            <p className="text-xs text-[#8ea1ff] truncate flex items-center gap-1.5" title="записывает голосовое сообщение">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                                    <path d="M12 16c2.206 0 4-1.794 4-4V6c0-2.217-1.785-4.021-3.979-4.021a.933.933 0 0 0-.209.025A4.006 4.006 0 0 0 8 6v6c0 2.206 1.794 4 4 4z" />
+                                    <path d="M11 19.931V22h2v-2.069c3.939-.495 7-3.858 7-7.931h-2c0 3.309-2.691 6-6 6s-6-2.691-6-6H4c0 4.072 3.061 7.436 7 7.931z" />
+                                </svg>
+                                записывает голосовое сообщение
+                            </p>
+                        ) : (
+                            <p className="text-xs text-[#8ea1ff] truncate flex items-center gap-1.5" title="печатает">
+                                <span className="flex gap-0.5 items-end h-2 shrink-0" aria-hidden>
+                                    <span className="w-0.5 h-1 rounded-full bg-[#8ea1ff] animate-bounce [animation-delay:0ms]" />
+                                    <span className="w-0.5 h-1.5 rounded-full bg-[#8ea1ff] animate-bounce [animation-delay:150ms]" />
+                                    <span className="w-0.5 h-1 rounded-full bg-[#8ea1ff] animate-bounce [animation-delay:300ms]" />
+                                </span>
+                                печатает…
+                            </p>
+                        )
+                    ) : status?.online ? (
+                        <p className="text-xs text-[#8ea1ff] truncate">онлайн</p>
+                    ) : status ? (
+                        <p className="text-xs text-[#8f9aa7] truncate">{status.text}</p>
                     ) : (
                         <p className="text-xs text-[#8f9aa7]">…</p>
                     )}
@@ -117,7 +143,7 @@ const MessageMeta: React.FC<{ isMe: boolean; timestamp: Date; status?: 'sent' | 
     </div>
 );
 
-const AttachmentBody: React.FC<{ type: 'image' | 'video' | 'audio' | 'file'; url: string; onOpenImage?: (url: string) => void }> = ({ type, url, onOpenImage }) => {
+const AttachmentBody: React.FC<{ type: 'image' | 'video' | 'audio' | 'file'; url: string; isMe?: boolean; onOpenImage?: (url: string) => void }> = ({ type, url, isMe, onOpenImage }) => {
     const src = assetUrl(url);
     if (!src) return null;
 
@@ -137,15 +163,8 @@ const AttachmentBody: React.FC<{ type: 'image' | 'video' | 'audio' | 'file'; url
     }
     if (type === 'audio') {
         return (
-            <div className="min-w-[180px] mb-1">
-                <p className="text-xs text-white/70 mb-1 flex items-center gap-1.5">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" />
-                        <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4" />
-                    </svg>
-                    Голосовое сообщение
-                </p>
-                <audio src={src} controls className="w-full h-8" />
+            <div className="mb-1">
+                <VoicePlayer src={src} isMe={!!isMe} />
             </div>
         );
     }
@@ -179,10 +198,11 @@ const MessageBubble: React.FC<{
     message: Message;
     showAvatar: boolean;
     chatName: string;
+    partnerAvatar?: string | null;
     onContextMenu: (e: React.MouseEvent, message: Message) => void;
     onOpenForwardedAuthor?: (userId: string, name: string) => void;
     onOpenImage?: (url: string) => void;
-}> = ({ message, showAvatar, chatName, onContextMenu, onOpenForwardedAuthor, onOpenImage }) => {
+}> = ({ message, showAvatar, chatName, partnerAvatar, onContextMenu, onOpenForwardedAuthor, onOpenImage }) => {
     const isMe = message.sender === 'me';
     const type = message.type || 'text';
 
@@ -246,11 +266,11 @@ const MessageBubble: React.FC<{
                 </div>
             )}
             {type === 'video' ? (
-                <AttachmentBody type="video" url={message.text} />
+                <AttachmentBody type="video" url={message.text} isMe={isMe} />
             ) : type === 'audio' ? (
-                <AttachmentBody type="audio" url={message.text} />
+                <AttachmentBody type="audio" url={message.text} isMe={isMe} />
             ) : type === 'file' ? (
-                <AttachmentBody type="file" url={message.text} />
+                <AttachmentBody type="file" url={message.text} isMe={isMe} />
             ) : (
                 <div className="text-sm leading-snug break-words whitespace-pre-wrap selectable">{message.text}</div>
             )}
@@ -265,7 +285,7 @@ const MessageBubble: React.FC<{
         >
             {!isMe && (
                 <div className="w-8 shrink-0">
-                    {showAvatar && <Avatar name={chatName} size={28} />}
+                    {showAvatar && <Avatar name={chatName} src={partnerAvatar || undefined} size={28} />}
                 </div>
             )}
             {bubble}
@@ -296,7 +316,8 @@ const MessageInput: React.FC<{
     isSendingAttachment?: boolean;
     replyTo?: Message | null;
     onCancelReply?: () => void;
-}> = ({ value, onChange, onSend, onAttachFile, isSendingAttachment, replyTo, onCancelReply }) => {
+    onRecordingChange?: (recording: boolean) => void;
+}> = ({ value, onChange, onSend, onAttachFile, isSendingAttachment, replyTo, onCancelReply, onRecordingChange }) => {
     const fileInputRef = React.useRef<HTMLInputElement>(null);
 
     // запись голосового сообщения
@@ -318,9 +339,13 @@ const MessageInput: React.FC<{
         chunksRef.current = [];
         setRecording(false);
         setRecSeconds(0);
+        onRecordingChange?.(false);
     };
 
-    React.useEffect(() => () => cleanupRecording(), []);
+    // остановка записи при размонтировании (без зависимостей эффекта)
+    const unmountCleanupRef = React.useRef<() => void>(() => {});
+    unmountCleanupRef.current = cleanupRecording;
+    React.useEffect(() => () => unmountCleanupRef.current(), []);
 
     const startRecording = async () => {
         if (recording || isSendingAttachment) return;
@@ -350,6 +375,7 @@ const MessageInput: React.FC<{
             recorderRef.current = rec;
             setRecording(true);
             setRecSeconds(0);
+            onRecordingChange?.(true);
             timerRef.current = window.setInterval(() => setRecSeconds((s) => s + 1), 1000);
         } catch (err) {
             console.error('Микрофон недоступен:', err);
@@ -453,7 +479,7 @@ const MessageInput: React.FC<{
             {micDenied && (
                 <p className="mx-3 sm:mx-4 mt-2 text-xs text-[#f23f42]">Нет доступа к микрофону — разрешите его в браузере</p>
             )}
-            <div className="flex items-end gap-2 px-3 sm:px-4 py-3">
+            <div className="flex items-center gap-2 px-3 sm:px-4 py-3">
                 <div className="flex-1 flex items-center bg-[#0e1621] border border-white/5 rounded-2xl px-3 sm:px-4">
                     <input
                         type="text"
@@ -496,15 +522,15 @@ const MessageInput: React.FC<{
                 <button
                     onClick={onSend}
                     disabled={!hasText || isSendingAttachment}
-                    className="bg-[#5865F2] hover:bg-[#4752c4] disabled:bg-[#222d3d] disabled:text-[#5d6b7b] text-white p-2.5 rounded-full transition-all active:scale-95 disabled:cursor-default shrink-0"
+                    className="bg-[#5865F2] hover:bg-[#4752c4] disabled:bg-[#222d3d] disabled:text-[#5d6b7b] text-white h-11 w-11 flex items-center justify-center rounded-full transition-all active:scale-95 disabled:cursor-default shrink-0"
                     aria-label="Отправить"
                 >
                     {isSendingAttachment ? (
-                        <svg className="animate-spin" width="18" height="18" viewBox="0 0 24 24" fill="none">
+                        <svg className="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         </svg>
                     ) : (
-                        <SendIcon size={18} />
+                        <SendIcon size={22} />
                     )}
                 </button>
             </div>
@@ -519,9 +545,9 @@ const MessageContextMenu: React.FC<{
     onClose: () => void;
     onReply: (m: Message) => void;
     onForward: (m: Message) => void;
-    onDelete: (m: Message, mode: 'self' | 'all') => void;
+    onDeletePrompt: (m: Message) => void;
     onTogglePin: (m: Message) => void;
-}> = ({ message, x, y, onClose, onReply, onForward, onDelete, onTogglePin }) => {
+}> = ({ message, x, y, onClose, onReply, onForward, onDeletePrompt, onTogglePin }) => {
     const menuRef = React.useRef<HTMLDivElement>(null);
     const [pos, setPos] = React.useState({ left: x, top: y, visible: false });
 
@@ -553,7 +579,6 @@ const MessageContextMenu: React.FC<{
         };
     }, [onClose]);
 
-    const isMe = message.sender === 'me';
     const itemCls = 'w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white hover:bg-[#5865F2]/80 transition-colors text-left';
 
     return (
@@ -600,22 +625,13 @@ const MessageContextMenu: React.FC<{
                 </button>
             )}
             <div className="h-px bg-white/10 my-1.5" />
-            <button className={`${itemCls} hover:bg-red-500/80`} onClick={() => { onDelete(message, 'self'); onClose(); }}>
+            <button className={`${itemCls} hover:bg-red-500/80`} onClick={() => { onDeletePrompt(message); onClose(); }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                     <polyline points="3 6 5 6 21 6" />
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                 </svg>
-                Удалить для меня
+                Удалить
             </button>
-            {isMe && (
-                <button className={`${itemCls} hover:bg-red-500/80`} onClick={() => { onDelete(message, 'all'); onClose(); }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                    Удалить для всех
-                </button>
-            )}
         </div>
     );
 };
@@ -877,7 +893,7 @@ const ChatInfoPanel: React.FC<{
                                         </svg>
                                         Голосовое сообщение
                                     </p>
-                                    <audio src={assetUrl(a.url)} controls className="w-full h-8" />
+                                    <VoicePlayer src={assetUrl(a.url) || ''} isMe={a.mine} compact />
                                 </div>
                             ))}
                             {files.map((f) => (
@@ -895,10 +911,10 @@ const ChatInfoPanel: React.FC<{
                                     Открыть файл
                                 </a>
                              ))}
-                         </div>
-                      )}
-                  </div>
-              </div>
+                          </div>
+                       )}
+                   </div>
+               </div>
     );
 
     return inner;
@@ -979,9 +995,9 @@ const PartnerProfileModal: React.FC<{
                             )}
                         </div>
                         <h3 className="text-xl font-bold text-white text-center selectable">{partner.displayName}</h3>
-                        <p className={`text-sm mt-1 ${partner.online ? 'text-[#8ea1ff]' : 'text-[#8f9aa7]'}`}>
-                            {partner.online ? 'онлайн' : formatLastSeen(partner.lastSeenAt)}
-                        </p>
+                        {!partner.online && (
+                            <p className="text-sm mt-1 text-[#8f9aa7]">{formatLastSeen(partner.lastSeenAt)}</p>
+                        )}
                     </div>
 
                     {/* Информация: строки в стиле Telegram */}
@@ -1049,7 +1065,7 @@ const PartnerProfileModal: React.FC<{
                                             </svg>
                                             Голосовое сообщение
                                         </p>
-                                        <audio src={assetUrl(a.url)} controls className="w-full h-8" />
+                                        <VoicePlayer src={assetUrl(a.url) || ''} isMe={a.mine} compact />
                                     </div>
                                 ))}
                                 {files.map((f) => (
@@ -1085,6 +1101,8 @@ const PartnerProfileModal: React.FC<{
     );
 };
 
+const messagesCache = new Map<string, Message[]>();
+
 const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', onSendMessage, onBack, onSelectChat }) => {
     const [message, setMessage] = React.useState('');
     const [messages, setMessages] = React.useState<Message[]>([]);
@@ -1093,16 +1111,44 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
     const [isSendingAttachment, setIsSendingAttachment] = React.useState(false);
     const [replyTo, setReplyTo] = React.useState<Message | null>(null);
     const [contextMenu, setContextMenu] = React.useState<{ message: Message; x: number; y: number } | null>(null);
+    const [deleteTarget, setDeleteTarget] = React.useState<Message | null>(null);
     const [forwardMessage, setForwardMessage] = React.useState<Message | null>(null);
     const [lightboxUrl, setLightboxUrl] = React.useState<string | null>(null);
     const [isMobile, setIsMobile] = React.useState(() => window.matchMedia('(max-width: 767px)').matches);
     // по умолчанию панель информации закрыта (и на мобильных, и на десктопе)
     const [infoOpen, setInfoOpen] = React.useState(false);
     const [pinnedMessages, setPinnedMessages] = React.useState<Message[]>([]);
+    const [loading, setLoading] = React.useState(false);
+    const [loadingOlder, setLoadingOlder] = React.useState(false);
+    const [hasMore, setHasMore] = React.useState(false);
     const [atBottom, setAtBottom] = React.useState(true);
+    const [partnerTyping, setPartnerTyping] = React.useState<null | 'typing' | 'recording'>(null);
     const messagesEndRef = React.useRef<HTMLDivElement>(null);
     const scrollRef = React.useRef<HTMLDivElement>(null);
     const needScrollBottomRef = React.useRef(true); // скролл вниз при открытии чата
+    const messagesRef = React.useRef<Message[]>([]);
+    messagesRef.current = messages;
+    const hasMoreRef = React.useRef(false);
+    hasMoreRef.current = hasMore;
+    // зеркало atBottom + флаг «доскроллить при рендере нового сообщения»
+    const atBottomRef = React.useRef(true);
+    atBottomRef.current = atBottom;
+    const incomingScrollRef = React.useRef(false);
+    const loadingOlderRef = React.useRef(false);
+    // якорь скролла при подгрузке старых сообщений (сохраняем позицию)
+    const scrollAnchorRef = React.useRef<{ prevHeight: number; prevTop: number } | null>(null);
+    const selectedChatRef = React.useRef<string | null>(null);
+    selectedChatRef.current = selectedChatId;
+
+    // применяем изменения к сообщениям текущего чата (состояние + кэш между переключениями)
+    const applyMessages = React.useCallback((fn: (prev: Message[]) => Message[]) => {
+        const chatId = selectedChatRef.current;
+        if (!chatId) return;
+        const next = fn(messagesRef.current);
+        messagesRef.current = next;
+        messagesCache.set(chatId, next);
+        setMessages(next);
+    }, []);
 
     React.useEffect(() => {
         const mq = window.matchMedia('(max-width: 767px)');
@@ -1139,8 +1185,8 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
         pinnedIdsRef.current = new Set(fetched.map((m) => m.id));
         setPinnedMessages(fetched.map((m) => ({ ...mapMessage(m), pinned: true })));
         // синхронизируем индикаторы закрепа у уже загруженных сообщений
-        setMessages((prev) => prev.map((m) => ({ ...m, pinned: pinnedIdsRef.current.has(m.id) })));
-    }, [selectedChatId]);
+        applyMessages((prev) => prev.map((m) => ({ ...m, pinned: pinnedIdsRef.current.has(m.id) })));
+    }, [selectedChatId, applyMessages]);
 
     React.useEffect(() => {
         pinnedIdsRef.current = new Set();
@@ -1166,43 +1212,106 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
         };
     }, [selectedChatId]);
 
-    const fetchMessages = React.useCallback(async () => {
-        if (!selectedChatId) {
+    const upsertServerMessage = React.useCallback((m: ChatMessage) => {
+        const mapped = mapMessage(m);
+        applyMessages((prev) => {
+            // дедуп: убираем локальную копию и уже существующее сообщение
+            const filtered = prev.filter((p) => {
+                if (p.id === mapped.id) return false;
+                if (
+                    p.id.startsWith('local-') &&
+                    p.sender === mapped.sender &&
+                    p.text === mapped.text &&
+                    Math.abs(p.timestamp.getTime() - mapped.timestamp.getTime()) < 15000
+                ) return false;
+                return true;
+            });
+            return [...filtered, mapped].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        });
+    }, [applyMessages]);
+
+    const fetchMessages = React.useCallback(async (showLoader = false) => {
+        const chatId = selectedChatId;
+        if (!chatId) {
             setMessages([]);
             return;
         }
+        if (showLoader) setLoading(true);
         try {
-            const fetched = await getMessages(selectedChatId);
-            setMessages(prev => {
-                const local = prev.filter(p => p.id.startsWith('local-'));
-                const serverIds = new Set<string>();
-                const server = fetched.map(m => {
-                    serverIds.add(m.id);
-                    return mapMessage(m);
-                });
-                // локальные отправленные, которых ещё нет на сервере (сверяем текст и время)
-                const stillLocal = local.filter(l =>
-                    !server.some(s =>
-                        s.sender === 'me' && s.text === l.text &&
-                        Math.abs(s.timestamp.getTime() - l.timestamp.getTime()) < 15000
-                    )
-                );
-                const merged = [...server, ...stillLocal].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-                return merged;
-            });
+            const { messages: fetched, hasMore: more } = await getMessages(chatId);
+            if (selectedChatRef.current !== chatId) return; // чат уже переключили
+            const local = messagesRef.current.filter(p => p.id.startsWith('local-'));
+            const server = fetched.map(m => mapMessage(m));
+            // локальные отправленные, которых ещё нет на сервере (сверяем текст и время)
+            const stillLocal = local.filter(l =>
+                !server.some(s =>
+                    s.sender === 'me' && s.text === l.text &&
+                    Math.abs(s.timestamp.getTime() - l.timestamp.getTime()) < 15000
+                )
+            );
+            const merged = [...server, ...stillLocal].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+            messagesCache.set(chatId, merged);
+            messagesRef.current = merged;
+            hasMoreRef.current = more;
+            setHasMore(more);
+            setMessages(merged);
         } catch (error) {
             console.error('Failed to load messages:', error);
+        } finally {
+            if (showLoader) setLoading(false);
         }
     }, [selectedChatId]);
 
+    // подгрузка старой истории при скролле вверх (курсорная пагинация)
+    const loadOlder = React.useCallback(async () => {
+        const chatId = selectedChatRef.current;
+        if (!chatId || loadingOlderRef.current || !hasMoreRef.current) return;
+        const oldest = messagesRef.current.find((m) => !m.id.startsWith('local-'));
+        if (!oldest) return;
+        loadingOlderRef.current = true;
+        setLoadingOlder(true);
+        try {
+            const { messages: older, hasMore: more } = await getMessages(chatId, oldest.timestamp.toISOString());
+            if (selectedChatRef.current !== chatId) return;
+            hasMoreRef.current = more;
+            setHasMore(more);
+            if (older.length) {
+                applyMessages((prev) => {
+                    const existing = new Set(prev.map((m) => m.id));
+                    const toAdd = older.map(mapMessage).filter((m) => !existing.has(m.id));
+                    return [...toAdd, ...prev].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load older messages:', error);
+        } finally {
+            loadingOlderRef.current = false;
+            setLoadingOlder(false);
+        }
+    }, [applyMessages]);
+
     React.useEffect(() => {
-        setMessages([]);
+        // мгновенный показ из кэша — без вспышки загрузки, если чат уже открывали
+        const cached = selectedChatId ? messagesCache.get(selectedChatId) : undefined;
+        setMessages(cached ? cached : []);
+        messagesRef.current = cached ? cached : [];
+        setPartnerTyping(null);
         needScrollBottomRef.current = true;
         setAtBottom(true);
-        fetchMessages();
-        const timer = setInterval(fetchMessages, 5000); // поллинг: новые сообщения и статусы прочтения
-        return () => clearInterval(timer);
+        if (!cached) setLoading(true);
+        // кэш мог быть обрезан по «свежим 50» — точных знаний hasMore нет; загружаем заново
+        fetchMessages(!cached);
     }, [selectedChatId, fetchMessages]);
+
+    // восстанавливаем позицию скролла после подгрузки истории
+    React.useEffect(() => {
+        if (scrollAnchorRef.current && scrollRef.current) {
+            const el = scrollRef.current;
+            const { prevHeight, prevTop } = scrollAnchorRef.current;
+            scrollAnchorRef.current = null;
+            el.scrollTop = el.scrollHeight - prevHeight + prevTop;
+        }
+    }, [messages]);
 
     // скролл вниз ТОЛЬКО при открытии чата и при отправке своего сообщения
     React.useEffect(() => {
@@ -1210,6 +1319,13 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
             messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
             needScrollBottomRef.current = false;
             setAtBottom(true);
+        }
+        // новое сообщение по WS: доскролл только если пользователь был внизу
+        if (incomingScrollRef.current) {
+            incomingScrollRef.current = false;
+            if (atBottomRef.current) {
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }
         }
     }, [messages]);
 
@@ -1221,32 +1337,131 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
         const el = scrollRef.current;
         if (!el) return;
         setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+        // доскроллили вверх — подгружаем старую историю (якорь сохранит позицию)
+        if (el.scrollTop < 120 && hasMoreRef.current && !loadingOlderRef.current) {
+            scrollAnchorRef.current = { prevHeight: el.scrollHeight, prevTop: el.scrollTop };
+            loadOlder();
+        }
+    };
+
+    // realtime: события WebSocket вместо поллинга
+    useSocketEvents((event) => {
+        if (event.type === 'message:new') {
+            const m = event.message;
+            const inThisChat = m.senderId === selectedChatId || m.recipientId === selectedChatId;
+            if (selectedChatId && inThisChat) {
+                upsertServerMessage({
+                    id: m._id,
+                    text: m.payload?.payload ?? '',
+                    mine: m.senderId !== selectedChatId,
+                    readAt: m.readAt ?? null,
+                    type: (m.type as ChatMessage['type']) ?? 'text',
+                    replyTo: m.replyTo ?? null,
+                    forwardedFrom: m.forwardedFrom ?? null,
+                    createdAt: m.createdAt
+                });
+                // автопрокрутка вниз только если пользователь и так у последнего сообщения
+                incomingScrollRef.current = atBottomRef.current;
+                if (m.recipientId !== selectedChatId) {
+                    // входящее от собеседника: чат открыт, вкладка активна → сразу отмечаем прочитанным
+                    if (document.visibilityState === 'visible') markChatRead(selectedChatId);
+                }
+            }
+            return;
+        }
+        if (event.type === 'messages:read' && event.chatId === selectedChatId) {
+            // собеседник прочитал — мгновенно ставим статусы «прочитано»
+            applyMessages((prev) => prev.map((m) => (m.sender === 'me' && m.status !== 'read' ? { ...m, status: 'read' as const } : m)));
+            return;
+        }
+        if (event.type === 'message:deleted' && event.mode === 'all') {
+            if (event.chatId === selectedChatId) {
+                applyMessages((prev) => prev.filter((m) => m.id !== event.messageId));
+                setPinnedMessages((prev) => prev.filter((m) => m.id !== event.messageId));
+                pinnedIdsRef.current.delete(event.messageId);
+            }
+            return;
+        }
+        if (event.type === 'message:pinned' && event.chatId === selectedChatId) {
+            pinnedIdsRef.current[event.pinned ? 'add' : 'delete'](event.messageId);
+            applyMessages((prev) => prev.map((m) => (m.id === event.messageId ? { ...m, pinned: event.pinned } : m)));
+            fetchPinned();
+            return;
+        }
+        if (event.type === 'chat:deleted' && event.chatId === selectedChatId && event.mode === 'all') {
+            applyMessages(() => []);
+            setPinnedMessages([]);
+            return;
+        }
+        if (event.type === 'typing' && selectedChatId) {
+            if (event.from === selectedChatId) setPartnerTyping(event.typing ? (event.kind ?? 'typing') : null);
+            return;
+        }
+        if (event.type === 'presence') {
+            // мгновенно обновляем статус собеседника в шапке
+            if (event.userId === selectedChatId) {
+                setPartnerStatus((prev) => (prev ? { ...prev, online: event.online, lastSeenAt: event.at } : prev));
+            }
+        }
+    });
+
+    // typing: шлём не чаще раза в 2с, а также «стоп» при очистке поля
+    const lastTypingSentRef = React.useRef(0);
+    const typingStopTimerRef = React.useRef<number | null>(null);
+    const sendTyping = (typing: boolean, kind?: 'typing' | 'recording') => {
+        if (!selectedChatId) return;
+        socket.send({ type: 'typing', to: selectedChatId, typing, kind });
+    };
+    const handleMessageInput = (value: string) => {
+        setMessage(value);
+        if (!selectedChatId) return;
+        const nowTs = Date.now();
+        if (value.trim() && nowTs - lastTypingSentRef.current > 2000) {
+            lastTypingSentRef.current = nowTs;
+            sendTyping(true, 'typing');
+        }
+        if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+        if (!value.trim()) {
+            sendTyping(false, 'typing');
+        } else {
+            typingStopTimerRef.current = window.setTimeout(() => {
+                sendTyping(false, 'typing');
+            }, 4000);
+        }
+    };
+
+    // запись голосового: собеседник видит «записывает голосовое сообщение»
+    const handleRecordingChange = (recording: boolean) => {
+        sendTyping(recording, 'recording');
     };
 
     const handleSend = async () => {
         if (message.trim() && selectedChatId) {
             const text = message.trim();
             setMessage('');
+            socket.send({ type: 'typing', to: selectedChatId, typing: false });
             const replyToId = replyTo && !replyTo.id.startsWith('local-') ? replyTo.id : null;
             const localId = `local-${Date.now()}`;
+            // оптимистично показываем сообщение сразу
+            const newMessage: Message = {
+                id: localId,
+                text,
+                sender: 'me',
+                timestamp: new Date(),
+                status: 'sent',
+                replyTo: replyTo ? { id: replyTo.id, text: replyTo.text, senderId: replyTo.sender === 'me' ? 'me' : 'them', type: replyTo.type || 'text' } : null,
+            };
+            applyMessages(prev => [...prev, newMessage]);
+            setReplyTo(null);
+            requestAnimationFrame(() => scrollToBottom('smooth'));
+            setAtBottom(true);
             try {
                 await sendMessage(selectedChatId, text, replyToId);
-                const newMessage: Message = {
-                    id: localId,
-                    text,
-                    sender: 'me',
-                    timestamp: new Date(),
-                    status: 'sent',
-                    replyTo: replyTo ? { id: replyTo.id, text: replyTo.text, senderId: replyTo.sender === 'me' ? 'me' : 'them', type: replyTo.type || 'text' } : null,
-                };
-                setMessages(prevMessages => [...prevMessages, newMessage]);
                 onSendMessage?.(text);
-                setReplyTo(null);
-                // пользователь отправил сообщение — чат прокручивается вниз
-                requestAnimationFrame(() => scrollToBottom('smooth'));
-                setAtBottom(true);
             } catch (error) {
                 console.error('Error sending message:', error);
+                // отправка не удалась — убираем оптимистичное сообщение и возвращаем текст
+                applyMessages(prev => prev.filter(m => m.id !== localId));
                 setMessage(text);
             }
         }
@@ -1257,10 +1472,9 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
         try {
             await deleteMessage(selectedChatId, msg.id, mode);
             if (mode === 'self') {
-                setMessages(prev => prev.filter(m => m.id !== msg.id));
+                applyMessages(prev => prev.filter(m => m.id !== msg.id));
             }
-            // для 'all' сервер заменит сообщение — подтянется при следующем поллинге
-            await fetchMessages();
+            // для 'all' сообщение удалится у обоих по WS-событию
             // закреп мог ссылаться на удалённое сообщение — обновляем плашку
             await fetchPinned();
             onSendMessage?.('deleted');
@@ -1299,7 +1513,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                 await pinMessage(selectedChatId, msg.id);
                 pinnedIdsRef.current.add(msg.id);
             }
-            setMessages(prev => prev.map(m => (m.id === msg.id ? { ...m, pinned: !msg.pinned } : m)));
+            applyMessages(prev => prev.map(m => (m.id === msg.id ? { ...m, pinned: !msg.pinned } : m)));
             await fetchPinned();
         } catch (error) {
             console.error('Error toggling pin:', error);
@@ -1311,7 +1525,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
         try {
             await unpinMessage(selectedChatId, msg.id);
             pinnedIdsRef.current.delete(msg.id);
-            setMessages(prev => prev.map(m => (m.id === msg.id ? { ...m, pinned: false } : m)));
+            applyMessages(prev => prev.map(m => (m.id === msg.id ? { ...m, pinned: false } : m)));
             await fetchPinned();
         } catch (error) {
             console.error('Error unpinning message:', error);
@@ -1365,6 +1579,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                     online: partnerStatus.online,
                     text: partnerStatus.online ? 'онлайн' : formatLastSeen(partnerStatus.lastSeenAt)
                 } : null}
+                partnerTyping={partnerTyping}
                 onOpenPartnerProfile={() => setIsPartnerProfileOpen(true)}
                 onToggleInfo={toggleInfo}
                 partnerAvatar={partnerStatus?.avatar || null}
@@ -1381,7 +1596,11 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                 onScroll={handleScroll}
                 className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 relative overscroll-contain"
             >
-                {messages.length === 0 ? (
+                {loading && messages.length === 0 ? (
+                    <div className="flex items-center justify-center h-full">
+                        <span className="w-7 h-7 border-2 border-[#5865F2] border-t-transparent rounded-full animate-spin" />
+                    </div>
+                ) : messages.length === 0 ? (
                     <div className="flex items-center justify-center h-full">
                         <div className="text-center text-[#8f9aa7]">
                             <p className="text-sm">Это начало вашей переписки с <span className="text-white">{chatName}</span></p>
@@ -1389,22 +1608,30 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                         </div>
                     </div>
                 ) : (
-                    messages.map((msg, i) => {
-                        const prev = messages[i - 1];
-                        const showAvatar = !prev || prev.sender !== msg.sender;
-                        return (
-                            <div key={msg.id} id={`msg-${msg.id}`} className="scroll-mt-20">
-                                <MessageBubble
-                                    message={msg}
-                                    showAvatar={showAvatar}
-                                    chatName={chatName}
-                                    onContextMenu={(e, m) => { e.preventDefault(); setContextMenu({ message: m, x: e.clientX, y: e.clientY }); }}
-                                    onOpenForwardedAuthor={handleOpenForwardedAuthor}
-                                    onOpenImage={setLightboxUrl}
-                                />
+                    <>
+                        {loadingOlder && (
+                            <div className="flex justify-center py-2">
+                                <span className="w-5 h-5 border-2 border-[#5865F2] border-t-transparent rounded-full animate-spin" />
                             </div>
-                        );
-                    })
+                        )}
+                        {messages.map((msg, i) => {
+                            const prev = messages[i - 1];
+                            const showAvatar = !prev || prev.sender !== msg.sender;
+                            return (
+                                <div key={msg.id} id={`msg-${msg.id}`} className="scroll-mt-20">
+                                    <MessageBubble
+                                        message={msg}
+                                        showAvatar={showAvatar}
+                                        chatName={chatName}
+                                        partnerAvatar={partnerStatus?.avatar || null}
+                                        onContextMenu={(e, m) => { e.preventDefault(); setContextMenu({ message: m, x: e.clientX, y: e.clientY }); }}
+                                        onOpenForwardedAuthor={handleOpenForwardedAuthor}
+                                        onOpenImage={setLightboxUrl}
+                                    />
+                                </div>
+                            );
+                        })}
+                    </>
                 )}
                 <div ref={messagesEndRef} />
             </div>
@@ -1422,14 +1649,15 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                     <polyline points="19 12 12 19 5 12" />
                 </svg>
             </button>
-            <MessageInput
+                <MessageInput
                     value={message}
-                    onChange={setMessage}
+                    onChange={handleMessageInput}
                     onSend={handleSend}
                     onAttachFile={handleAttachFile}
                     isSendingAttachment={isSendingAttachment}
                     replyTo={replyTo}
                     onCancelReply={() => setReplyTo(null)}
+                    onRecordingChange={handleRecordingChange}
                 />
             </div>
 
@@ -1499,10 +1727,28 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                     onClose={() => setContextMenu(null)}
                     onReply={(m) => setReplyTo(m)}
                     onForward={(m) => setForwardMessage(m)}
-                    onDelete={handleDeleteMessage}
+                    onDeletePrompt={(m) => setDeleteTarget(m)}
                     onTogglePin={handleTogglePin}
                 />
             )}
+
+            {/* Удаление сообщения: как и удаление чата — с выбором «для всех / только у меня» */}
+            <DeleteConfirmModal
+                open={!!deleteTarget}
+                title="Удалить сообщение?"
+                subtitle={
+                    deleteTarget
+                        ? deleteTarget.type === 'text' || !deleteTarget.type
+                            ? deleteTarget.text
+                            : humanizeType(deleteTarget.type)
+                        : undefined
+                }
+                onClose={() => setDeleteTarget(null)}
+                onDelete={(mode) => {
+                    if (deleteTarget) handleDeleteMessage(deleteTarget, mode);
+                    setDeleteTarget(null);
+                }}
+            />
 
             <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />
 

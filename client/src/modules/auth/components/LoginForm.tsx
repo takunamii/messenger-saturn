@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { login } from '../api/api';
 import type { AuthResponse, ApiError } from '../api/types';
 import AuthLayout from './AuthLayout';
+import { socket } from '../../../utils/socket';
+
+const connectSocket = () => socket.connect();
 
 const LoginForm: React.FC = () => {
     const [email, setEmail] = React.useState<string>('');
@@ -24,6 +27,7 @@ const LoginForm: React.FC = () => {
         try {
             const response: AuthResponse = await login({ email, password });
             localStorage.setItem('token', response.token);
+            connectSocket();
             setError('');
             navigate('/home');
         } catch (err) {

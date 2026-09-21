@@ -227,7 +227,7 @@ function check(name, cond, extra) {
   r = await req('GET', `/chats/${aliceId}/messages`, { token: bobTok });
   const fwdSource = r.data.messages.find((m) => m.payload.payload === 'Привет, это Алиса');
   r = await req('POST', `/chats/${eveId}/forward`, { token: bobTok, body: { messageId: fwdSource._id } });
-  check('forward 201 with forwardedFrom', r.status === 201 && r.data.forwardedFrom === aliceId, r);
+  check('forward 201 with forwardedFrom', r.status === 201 && r.data.forwardedFrom && r.data.forwardedFrom.id === aliceId && r.data.mine === true, r);
 
   r = await req('GET', `/chats/${bobId}/messages`, { token: eveTok });
   check('forwarded message visible to eve', r.status === 200 && r.data.messages.some((m) => m.payload.payload === 'Привет, это Алиса' && m.forwardedFrom && m.forwardedFrom.id === aliceId && m.forwardedFrom.displayName === 'Алиса Тест'), r);

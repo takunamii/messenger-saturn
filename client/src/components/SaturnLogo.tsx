@@ -6,52 +6,26 @@ interface SaturnLogoProps {
     color?: string;
 }
 
-// Логотип по образцу: планета с кольцом, проходящим спереди и позади, с бликами
-const SaturnLogo: React.FC<SaturnLogoProps> = ({ size = 28, className = '', color = '#e8eaed' }) => (
-    <svg
-        width={size}
-        height={size}
-        viewBox="0 0 48 48"
-        fill="none"
-        className={className}
-        aria-hidden="true"
+// Логотип проекта: изображение client/public/saturn.png на белой скруглённой плашке
+// color оставлен для совместимости с существующими вызовами
+const SaturnLogo: React.FC<SaturnLogoProps> = ({ size = 28, className = '' }) => (
+    <div
+        className={`bg-white flex items-center justify-center shrink-0 ${className}`}
+        style={{
+            width: size,
+            height: size,
+            borderRadius: Math.round(size * 0.28),
+            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)',
+        }}
     >
-        {/* кольцо: задняя дуга */}
-        <g transform="rotate(-18 24 24)">
-            <path
-                d="M3 24 A 21 7 0 0 1 45 24"
-                stroke={color}
-                strokeWidth="3"
-                strokeLinecap="round"
-            />
-        </g>
-        {/* планета */}
-        <circle cx="24" cy="24" r="13" fill={color} />
-        {/* блики на планете */}
-        <path
-            d="M13.4 17.5 A 13 13 0 0 1 34.6 17.5"
-            stroke="#17212b"
-            strokeWidth="2.2"
-            fill="none"
-            transform="rotate(-18 24 24) translate(0 -2)"
+        <img
+            src="/saturn.png"
+            alt="Saturn"
+            width={Math.round(size * 0.6)}
+            height={Math.round(size * 0.6)}
+            draggable={false}
         />
-        <path
-            d="M12.5 30.5 A 13 13 0 0 0 35.5 30.5"
-            stroke="#17212b"
-            strokeWidth="1.8"
-            fill="none"
-            transform="rotate(-18 24 24) translate(0 1)"
-        />
-        {/* кольцо: передняя дуга */}
-        <g transform="rotate(-18 24 24)">
-            <path
-                d="M3 24 A 21 7 0 0 0 45 24"
-                stroke={color}
-                strokeWidth="3"
-                strokeLinecap="round"
-            />
-        </g>
-    </svg>
+    </div>
 );
 
 export default SaturnLogo;

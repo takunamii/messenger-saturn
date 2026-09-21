@@ -92,10 +92,7 @@ const ChatList: React.FC<ChatListProps> = ({ chats, allUsers, onSelectChat, sear
                 )}
             </div>
             <div className="flex-1 min-w-0">
-                <p className="font-medium truncate text-white flex items-center gap-1.5">
-                    {chat.pinned && (
-                        <PinIcon className="text-[#8ea1ff] shrink-0 flex" title="Закреплён" />
-                    )}
+                <p className="font-medium truncate text-white">
                     <span className="truncate selectable">{chat.name}</span>
                 </p>
                 <p className={`text-xs truncate ${chat.id === selectedChatId ? 'text-white/70' : 'text-[#8f9aa7]'}`}>
@@ -121,7 +118,14 @@ const ChatList: React.FC<ChatListProps> = ({ chats, allUsers, onSelectChat, sear
                     </span>
                 )}
                 {(chat.unreadCount ?? 0) > 0 && (
-                    <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-[#f23f42] text-white text-[10px] font-bold rounded-full">
+                    <span
+                        className={`min-w-[19px] h-[19px] px-1.5 flex items-center justify-center text-[10px] font-semibold rounded-full shadow-[0_2px_8px_rgba(0,0,0,0.35)] transition-colors ${
+                            chat.id === selectedChatId
+                                ? 'bg-white text-[#5865F2]'
+                                : 'bg-gradient-to-br from-[#6d7cf6] to-[#4752c4] text-white'
+                        }`}
+                        title={`${chat.unreadCount} непрочитанных`}
+                    >
                         {chat.unreadCount! > 99 ? '99+' : chat.unreadCount}
                     </span>
                 )}

@@ -19,11 +19,8 @@ const axiosInstance = axios.create({
 // РРЅС‚РµСЂСЃРµРїС‚РѕСЂ РґР»СЏ РґРѕР±Р°РІР»РµРЅРёСЏ С‚РѕРєРµРЅР°
 axiosInstance.interceptors.request.use((config) => {
     const token = localStorage.getItem('token');
-    console.log('Token used:', token ? `Bearer ${token}` : 'Absent');
     if (token) {
         config.headers.Authorization = `Bearer ${token}`;
-    } else {
-        console.warn('No token found in localStorage');
     }
     return config;
 });

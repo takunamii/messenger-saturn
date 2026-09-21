@@ -1,11 +1,14 @@
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
+const http = require('http');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const chatRoutes = require('./routes/chats');
+const { handleUpgrade } = require('./ws');
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 
 app.use(cors({ origin: true, credentials: true }));
@@ -32,8 +35,10 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: 'Внутренняя ошибка сервера' });
 });
 
-app.listen(PORT, () => {
-  console.log(`Saturn API запущен на http://localhost:${PORT}`);
+handleUpgrade(server);
+
+server.listen(PORT, () => {
+  console.log(`Saturn API запущен на http://localhost:${PORT} (WS: /ws)`);
 });
 
 module.exports = app;

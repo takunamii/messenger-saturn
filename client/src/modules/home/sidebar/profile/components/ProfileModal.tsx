@@ -4,6 +4,7 @@ import type { UserProfile, EditUserDto } from '../api/types';
 import { useNavigate } from 'react-router-dom';
 import axios, { AxiosError } from 'axios';
 import { assetUrl } from '../../../../../utils/assetUrl';
+import { socket } from '../../../../../utils/socket';
 
 interface ProfileModalProps {
     isOpen: boolean;
@@ -117,6 +118,7 @@ interface ProfileModalProps {
     };
 
     const handleLogout = () => {
+        socket.disconnect();
         localStorage.removeItem('token');
         navigate('/login');
     };
