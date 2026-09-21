@@ -143,12 +143,13 @@ export const searchUsers = async (query: string): Promise<User[]> => {
     }
 };
 
-// Сообщения переписки с пользователем
-export const getMessages = async (userId: string, page = 1, limit = 50): Promise<ChatMessage[]> => {
+// Сообщения переписки: newest-first пачка (курсорная пагинация через before)
+export const getMessages = async (userId: string, before?: string): Promise<{ messages: ChatMessage[]; hasMore: boolean }> => {
     try {
-        const params = { page, limit };
-        const { data } = await axiosInstance.get<{ messages: MessageDto[] }>(`/chats/${userId}/messages`, { params });
-        return data.messages.map((msg) => ({
+        const params: Record<string, unknown> = { limit: 50 };
+        if (before) params.before = before;
+        const { data } = await axiosInstance.get<{ messages: MessageDto[]; hasMore?: boolean }>(`/chats/${userId}/messages`, { params });
+        const messages = data.messages.map((msg) => ({
             id: msg._id,
             text: msg.payload?.payload ?? '',
             mine: !!msg.mine,
@@ -158,10 +159,21 @@ export const getMessages = async (userId: string, page = 1, limit = 50): Promise
             forwardedFrom: msg.forwardedFrom ?? null,
             createdAt: msg.createdAt
         }));
+        return { messages, hasMore: !!data.hasMore };
     } catch (error: unknown) {
         const axiosError = error as AxiosError<{ message: string }>;
         console.error('Failed to fetch messages:', axiosError.response?.data || axiosError.message);
-        return [];
+        return { messages: [], hasMore: false };
+    }
+};
+
+// Отметить входящие прочитанными (когда чат открыт и сообщения пришли по WS)
+export const markChatRead = async (userId: string): Promise<void> => {
+    try {
+        await axiosInstance.post(`/chats/${userId}/read`);
+    } catch (error: unknown) {
+        const axiosError = error as AxiosError<{ message: string }>;
+        console.error('Failed to mark chat read:', axiosError.response?.data || axiosError.message);
     }
 };
 

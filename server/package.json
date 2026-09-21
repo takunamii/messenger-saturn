@@ -14,7 +14,8 @@
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.4.0",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "ws": "^8.18.0"
   },
   "allowScripts": {
     "sqlite3@5.1.7": true

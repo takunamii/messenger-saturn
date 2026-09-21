@@ -3,8 +3,16 @@ const path = require('path');
 const multer = require('multer');
 const { run, get, all, uid, now } = require('../db');
 const { authenticate } = require('../middleware/auth');
+const { sendToUser } = require('../ws');
 
 const router = express.Router();
+
+// Рассылка события участникам переписки: chatId/partnerId подставляются для каждого получателя
+// (chatId — id собеседника с точки зрения получателя)
+function emitMessageEvent(partnerId, me, event) {
+  sendToUser(me, { ...event, partnerId, chatId: partnerId });
+  sendToUser(partnerId, { ...event, partnerId: me, chatId: me });
+}
 
 // нормализация пары участников переписки (для закрепов: не важно, кто «отправитель»)
 function sortPair(a, b) {
@@ -103,16 +111,22 @@ router.get('/chats/:userId/messages', authenticate, async (req, res, next) => {
     if (!partner) return res.status(404).json({ message: 'Пользователь не найден' });
 
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
-    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-    const offset = (page - 1) * limit;
+    // курсорная пагинация: before — ISO-время, возвращаем сообщения СТАРШЕ курсора
+    const beforeRaw = req.query.before ? new Date(String(req.query.before)) : null;
+    const before = beforeRaw && !isNaN(beforeRaw.getTime()) ? beforeRaw.toISOString() : null;
+    const fetchLimit = limit + 1;
 
     // Я открыл чат — сообщения собеседника считаю прочитанными (статус «прочитано» у отправителя).
     // Обновляем ДО выборки, чтобы в ответе был актуальный readAt.
-    await run(
+    const result = await run(
       `UPDATE messages SET read_at = ?
        WHERE recipient_id = ? AND sender_id = ? AND read_at IS NULL`,
       [now(), me, partnerId]
     );
+    if (result.changes > 0) {
+      // мгновенно сообщаем отправителю о прочтении
+      sendToUser(partnerId, { type: 'messages:read', chatId: me, at: now() });
+    }
 
     const rows = await all(
       `SELECT m.*, rt.sender_id AS reply_sender_id, rt.payload AS reply_payload, rt.type AS reply_type,
@@ -122,37 +136,64 @@ router.get('/chats/:userId/messages', authenticate, async (req, res, next) => {
        LEFT JOIN users fu ON fu.id = m.forwarded_from
        WHERE ((m.sender_id = ? AND m.recipient_id = ?) OR (m.sender_id = ? AND m.recipient_id = ?))
          AND m.id NOT IN (SELECT hm.message_id FROM hidden_messages hm WHERE hm.user_id = ?)
-       ORDER BY m.created_at ASC LIMIT ? OFFSET ?`,
-      [me, partnerId, partnerId, me, me, limit, offset]
+         ${before ? 'AND m.created_at < ?' : ''}
+       ORDER BY m.created_at DESC LIMIT ?`,
+      before
+        ? [me, partnerId, partnerId, me, me, before, fetchLimit]
+        : [me, partnerId, partnerId, me, me, fetchLimit]
     );
+    // newest-first из БД → отдаём в хронологическом порядке
+    const hasMore = rows.length > limit;
+    const pageRows = rows.slice(0, limit).reverse();
     const totalRow = await get(
       `SELECT COUNT(*) AS c FROM messages
        WHERE (sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)`,
       [me, partnerId, partnerId, me]
     );
 
-    return res.json({
-      messages: rows.map((m) => ({
-        _id: m.id,
-        senderId: m.sender_id,
-        recipientId: m.recipient_id,
-        mine: m.sender_id === me,
-        type: m.type,
-        payload: { type: m.type, payload: m.payload },
-        readAt: m.read_at || null,
-        replyTo: m.reply_to ? {
-          id: m.reply_to,
-          senderId: m.reply_sender_id,
-          text: m.reply_payload || '',
-          type: m.reply_type || 'text'
-        } : null,
-        forwardedFrom: m.forwarded_from ? { id: m.forwarded_from, displayName: m.fwd_name } : null,
-        createdAt: m.created_at
-      })),
-      total: totalRow.c,
-      page,
-      limit
+    const mapMessageRow = (m) => ({
+      _id: m.id,
+      senderId: m.sender_id,
+      recipientId: m.recipient_id,
+      mine: m.sender_id === me,
+      type: m.type,
+      payload: { type: m.type, payload: m.payload },
+      readAt: m.read_at || null,
+      replyTo: m.reply_to ? {
+        id: m.reply_to,
+        senderId: m.reply_sender_id,
+        text: m.reply_payload || '',
+        type: m.reply_type || 'text'
+      } : null,
+      forwardedFrom: m.forwarded_from ? { id: m.forwarded_from, displayName: m.fwd_name } : null,
+      createdAt: m.created_at
     });
+
+    return res.json({
+      messages: pageRows.map(mapMessageRow),
+      hasMore,
+      total: totalRow.c
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /chats/:userId/read — отметить входящие в текущем открытом чате прочитанными
+// (нужно, когда сообщения приходят по WS без повторного GET)
+router.post('/chats/:userId/read', authenticate, async (req, res, next) => {
+  try {
+    const me = req.userId;
+    const partnerId = req.params.userId;
+    const result = await run(
+      `UPDATE messages SET read_at = ?
+       WHERE recipient_id = ? AND sender_id = ? AND read_at IS NULL`,
+      [now(), me, partnerId]
+    );
+    if (result.changes > 0) {
+      sendToUser(partnerId, { type: 'messages:read', chatId: me, at: now() });
+    }
+    return res.json({ ok: true, marked: result.changes });
   } catch (err) {
     next(err);
   }
@@ -179,20 +220,27 @@ router.post('/chats/:userId/attachments', authenticate, attachmentUpload.single(
 
     const id = uid();
     const ts = now();
-    await run(
-      `INSERT INTO messages (id, sender_id, recipient_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, me, partnerId, type, url, ts]
-    );
-
-    return res.status(201).json({
+    const message = {
       _id: id,
       senderId: me,
       recipientId: partnerId,
       mine: true,
       type,
       payload: { type, payload: url },
+      replyTo: null,
+      forwardedFrom: null,
+      readAt: null,
       createdAt: ts
-    });
+    };
+    await run(
+      `INSERT INTO messages (id, sender_id, recipient_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, me, partnerId, type, url, ts]
+    );
+
+    // realtime: новое сообщение с вложением — обоим участникам
+    emitMessageEvent(partnerId, me, { type: 'message:new', message: { ...message, mine: undefined } });
+
+    return res.status(201).json(message);
   } catch (err) {
     next(err);
   }
@@ -261,21 +309,36 @@ router.post('/chats/:userId/messages', authenticate, async (req, res, next) => {
 
     const id = uid();
     const ts = now();
+    const replyPayload = replyTo
+      ? await get('SELECT sender_id, payload, type FROM messages WHERE id = ?', [replyTo.id])
+      : null;
     await run(
       `INSERT INTO messages (id, sender_id, recipient_id, type, payload, reply_to, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, me, partnerId, type === 'image' ? 'image' : 'text', String(text), replyTo ? replyTo.id : null, ts]
+      [id, me, partnerId, 'text', String(text), replyTo ? replyTo.id : null, ts]
     );
 
-    return res.status(201).json({
+    const message = {
       _id: id,
       senderId: me,
       recipientId: partnerId,
       mine: true,
       type: 'text',
       payload: { type: 'text', payload: String(text) },
-      replyTo: replyTo ? { id: replyTo.id } : null,
+      replyTo: replyTo ? {
+        id: replyTo.id,
+        senderId: replyPayload ? replyPayload.sender_id : null,
+        text: replyPayload ? replyPayload.payload : '',
+        type: replyPayload ? (replyPayload.type || 'text') : 'text'
+      } : null,
+      forwardedFrom: null,
+      readAt: null,
       createdAt: ts
-    });
+    };
+
+    // realtime: новое сообщение — обоим участникам
+    emitMessageEvent(partnerId, me, { type: 'message:new', message });
+
+    return res.status(201).json(message);
   } catch (err) {
     next(err);
   }
@@ -308,16 +371,24 @@ router.post('/chats/:userId/forward', authenticate, async (req, res, next) => {
       [id, me, partnerId, original.type, original.payload, original.sender_id, ts]
     );
 
-    return res.status(201).json({
+    const fwdUser = await get('SELECT display_name FROM users WHERE id = ?', [original.sender_id]);
+    const message = {
       _id: id,
       senderId: me,
       recipientId: partnerId,
       mine: true,
       type: original.type,
       payload: { type: original.type, payload: original.payload },
-      forwardedFrom: original.sender_id,
+      replyTo: null,
+      forwardedFrom: { id: original.sender_id, displayName: fwdUser ? fwdUser.display_name : '' },
+      readAt: null,
       createdAt: ts
-    });
+    };
+
+    // realtime: пересланное сообщение — обоим участникам
+    emitMessageEvent(partnerId, me, { type: 'message:new', message });
+
+    return res.status(201).json(message);
   } catch (err) {
     next(err);
   }
@@ -342,6 +413,8 @@ router.delete('/chats/:userId/messages/:messageId', authenticate, async (req, re
       await run(`DELETE FROM messages WHERE id = ?`, [req.params.messageId]);
       // закрепы сообщения тоже снимаются (каскадом, но на всякий случай явно)
       await run(`DELETE FROM pinned_messages WHERE message_id = ?`, [req.params.messageId]);
+      // realtime: удаление для всех — обоим участникам
+      emitMessageEvent(partnerId, me, { type: 'message:deleted', chatId: partnerId, messageId: req.params.messageId, mode });
     } else {
       // скрыть только для себя
       await run(
@@ -418,6 +491,8 @@ router.post('/chats/:userId/messages/:messageId/pin', authenticate, async (req, 
       `INSERT INTO pinned_messages (id, chat_a, chat_b, message_id, pinned_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
       [id, a, b, messageId, me, now()]
     );
+    // realtime: закреп/откреп — обоим участникам
+    emitMessageEvent(partnerId, me, { type: 'message:pinned', chatId: partnerId, messageId, pinned: true });
     return res.status(201).json({ ok: true, pinned: true, _id: id });
   } catch (err) {
     next(err);
@@ -431,6 +506,7 @@ router.delete('/chats/:userId/messages/:messageId/pin', authenticate, async (req
     const partnerId = req.params.userId;
     const [a, b] = sortPair(me, partnerId);
     await run('DELETE FROM pinned_messages WHERE chat_a = ? AND chat_b = ? AND message_id = ?', [a, b, req.params.messageId]);
+    emitMessageEvent(partnerId, me, { type: 'message:pinned', chatId: partnerId, messageId: req.params.messageId, pinned: false });
     return res.json({ ok: true, pinned: false });
   } catch (err) {
     next(err);
@@ -500,6 +576,8 @@ router.delete('/chats/:userId', authenticate, async (req, res, next) => {
       // закрепления и скрытия у обоих сбрасываются
       await run('DELETE FROM chat_pins WHERE (user_id = ? AND partner_id = ?) OR (user_id = ? AND partner_id = ?)', [me, partnerId, partnerId, me]);
       await run('DELETE FROM hidden_chats WHERE (user_id = ? AND partner_id = ?) OR (user_id = ? AND partner_id = ?)', [me, partnerId, partnerId, me]);
+      // realtime: чат удалён у обоих
+      emitMessageEvent(partnerId, me, { type: 'chat:deleted', chatId: me, mode });
     } else {
       // скрыть чат только у себя
       await run(

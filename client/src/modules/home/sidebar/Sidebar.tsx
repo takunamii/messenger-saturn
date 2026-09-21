@@ -9,6 +9,7 @@ import Avatar from '../../../components/Avatar';
 import DeleteConfirmModal from '../../../components/DeleteConfirmModal';
 import ChatContextMenu from '../../../components/ChatContextMenu';
 import { isUserOnline } from '../../../utils/formatLastSeen';
+import { useSocketEvents } from '../../../utils/socket';
 
 export interface Chat {
     id: string;
@@ -47,11 +48,93 @@ const Sidebar: React.FC<{
         }
     }, []);
 
+    const refreshTimerRef = React.useRef<number | null>(null);
+    const refreshChatsSoon = React.useCallback(() => {
+        if (refreshTimerRef.current) return;
+        refreshTimerRef.current = window.setTimeout(() => {
+            refreshTimerRef.current = null;
+            refreshChats();
+        }, 200);
+    }, [refreshChats]);
+
     React.useEffect(() => {
         refreshChats();
-        const timer = setInterval(refreshChats, 10000);
-        return () => clearInterval(timer);
+        // страховочный поллинг раз в 60с (WS покрывает всё остальное)
+        const timer = setInterval(refreshChats, 60000);
+        return () => {
+            clearInterval(timer);
+            if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+        };
     }, [refreshChats]);
+
+    // realtime: список чатов обновляется мгновенно по WS-событиям
+    const humanizeType = (type?: string, text?: string) => {
+        switch (type) {
+            case 'image': return 'Изображение';
+            case 'video': return 'Видеофайл';
+            case 'audio': return 'Голосовое сообщение';
+            case 'file': return 'Файл';
+            default: return text || 'No messages yet';
+        }
+    };
+
+    useSocketEvents((event) => {
+        switch (event.type) {
+            case 'message:new': {
+                // локальное обновление строки чата — без запроса к серверу
+                const m = event.message;
+                const pid = event.partnerId;
+                if (!pid) { refreshChatsSoon(); break; }
+                const incoming = m.senderId === pid;
+                const updatedAt = m.createdAt || new Date().toISOString();
+                setChats((prev) => {
+                    const idx = prev.findIndex((c) => c.id === pid);
+                    if (idx === -1) {
+                        refreshChatsSoon(); // новый чат — подтягиваем целиком
+                        return prev;
+                    }
+                    const chat = prev[idx];
+                    const unread = chat.unreadCount ?? 0;
+                    const updated: Chat = {
+                        ...chat,
+                        lastMessage: humanizeType(m.type, m.payload?.payload),
+                        lastMessageAt: updatedAt,
+                        unreadCount: incoming && pid !== selectedChatId ? unread + 1 : unread,
+                    };
+                    const next = prev.slice();
+                    next[idx] = updated;
+                    const pinnedChats = next.filter((c) => c.pinned);
+                    const rest = next
+                        .filter((c) => !c.pinned)
+                        .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''));
+                    return [...pinnedChats, ...rest];
+                });
+                break;
+            }
+            case 'chat:deleted': {
+                if (event.mode === 'all' && event.partnerId) {
+                    // чат удалён у обоих — убираем локально
+                    setChats((prev) => prev.filter((c) => c.id !== event.partnerId));
+                } else {
+                    refreshChatsSoon();
+                }
+                break;
+            }
+            case 'presence': {
+                const at = event.online ? new Date().toISOString() : event.at;
+                setChats((prev) => prev.map((c) => (c.id === event.userId ? { ...c, lastSeenAt: at } : c)));
+                break;
+            }
+            default:
+                break;
+        }
+    });
+
+    // открытый чат — непрочитанных больше нет
+    React.useEffect(() => {
+        if (!selectedChatId) return;
+        setChats((prev) => prev.map((c) => (c.id === selectedChatId ? { ...c, unreadCount: 0 } : c)));
+    }, [selectedChatId]);
 
     // регистрируем мгновенное обновление списка (после отправки сообщения)
     React.useEffect(() => {
@@ -119,7 +202,7 @@ const Sidebar: React.FC<{
         return (
             <div className="w-full h-dvh bg-[#17212b] flex flex-col relative border-r border-black/30">
                 <div className="h-[60px] flex items-center justify-center shrink-0">
-                    <SaturnLogo size={22} />
+                    <SaturnLogo size={36} />
                 </div>
                 <div className="flex-1 overflow-y-auto px-2 pt-1 pb-2">
                     {chats.map(chat => (
@@ -136,7 +219,10 @@ const Sidebar: React.FC<{
                                 <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-[#17212b]" />
                             )}
                             {(chat.unreadCount ?? 0) > 0 && (
-                                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-0.5 flex items-center justify-center bg-[#f23f42] text-white text-[9px] font-bold rounded-full">
+                                <span
+                                    className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] px-1 flex items-center justify-center bg-gradient-to-br from-[#6d7cf6] to-[#4752c4] text-white text-[9px] font-semibold rounded-full border-2 border-[#17212b]"
+                                    title={`${chat.unreadCount} непрочитанных`}
+                                >
                                     {chat.unreadCount! > 9 ? '9+' : chat.unreadCount}
                                 </span>
                             )}
@@ -185,7 +271,7 @@ const Sidebar: React.FC<{
         <div className="w-full h-dvh bg-[#17212b] flex flex-col relative border-r border-black/30">
             {/* Header */}
             <div className="h-[60px] px-4 flex items-center gap-2.5 shrink-0">
-                <SaturnLogo size={26} />
+                <SaturnLogo size={40} />
                 <h1 className="text-white text-lg font-bold tracking-wide">Saturn</h1>
             </div>
             <UserSearch searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
