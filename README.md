@@ -1,76 +1,234 @@
-# Saturn — деплой и запуск
+# Saturn Messenger
 
-https://messenger-saturn.netlify.app/
+[![Demo](https://img.shields.io/badge/demo-live-success)](https://messenger-saturn.netlify.app/)
 
-## Структура
-- `client/` — React (Vite) фронтенд
-- `server/` — Express + JWT + SQLite бэкенд
+**Live Demo:** https://messenger-saturn.netlify.app/
 
-## Локальный запуск
-```bash
-cd server && npm install && npm start        # API на :3000
-cd client && npm install && npm run dev      # UI на :5173
+A full-stack web messenger built with React, Express, JWT authentication, and SQLite.
+
+Saturn provides user authentication, private conversations, user search, messaging, unread message indicators, pinned chats, user avatars, and image uploads.
+
+The project is split into a React frontend and an Express REST API backend.
+
+## Features
+
+* User registration
+* User authentication
+* JWT-based authorization
+* User search by username
+* Private conversations
+* Messaging
+* Persistent message history
+* Unread message indicators
+* Chat pinning
+* User avatars
+* Image uploads
+* SQLite database
+* REST API
+* Responsive interface
+* Separate frontend and backend
+* Production deployment
+
+## Tech Stack
+
+### Frontend
+
+* React
+* Vite
+* JavaScript
+* CSS
+* React Hooks
+
+### Backend
+
+* Node.js
+* Express
+* JWT
+* SQLite
+* REST API
+
+### Deployment
+
+* Netlify
+* Railway
+
+## Architecture
+
+```text
+Browser
+   │
+   ▼
+React + Vite
+   │
+   │ HTTP / REST API
+   ▼
+Express Server
+   │
+   ├── JWT Authentication
+   ├── Users
+   ├── Messages
+   └── File Uploads
+   │
+   ▼
+SQLite
 ```
 
-## Хостинг для тестов с другом (рекомендуется: клиент на Netlify, сервер на Railway)
+## Project Structure
 
-### Шаг 0. Залить проект в GitHub
-```bash
-# установи git (https://git-scm.com/download/win), затем в папке проекта:
-git init
-git add -A
-git commit -m "Saturn chat app"
-# создай пустой репозиторий на github.com и:
-git remote add origin https://github.com/<твой-ник>/saturn.git
-git push -u origin main
-```
-Файлы `saturn.db` и `uploads/` уже в .gitignore — в репозиторий не попадут.
-
-### Шаг 1. Сервер на Railway
-1. [railway.app](https://railway.app) → войти через GitHub → New Project → **Deploy from GitHub repo** → выбери репозиторий.
-2. В созданном сервисе: Settings → Root Directory = `server` (команда старта `npm start` подтянется из package.json).
-3. Variables → добавь:
-   - `JWT_SECRET` = любой длинный случайный секрет
-   - `DB_PATH` = `/data/saturn.db`
-   - `UPLOADS_DIR` = `/data/uploads`
-4. Settings → Volumes → **New Volume**, mount path = `/data` (иначе БД и картинки стираются при рестарте).
-5. Settings → Networking → **Generate Domain** → получишь адрес API вида `https://saturn-api.up.railway.app`.
-
-### Шаг 2. Клиент на Netlify
-1. [netlify.com](https://netlify.com) → Add new site → **Import an existing project** → GitHub → репозиторий.
-2. В настройках деплоя: Base directory = `client`, Build command = `npm run build`, Publish directory = `client/dist` (можно оставить пустыми — всё уже в `netlify.toml` в корне репозитория).
-3. Environment variables → добавь `VITE_API_URL` = адрес API из шага 1 (без `/` в конце).
-4. Deploy. Получишь адрес вида `https://saturn.netlify.app` — открывайте с другом.
-
-> Важно: переменную `VITE_API_URL` задавай ДО первой сборки (при изменении — Deploys → Trigger deploy, Vite подставляет адрес при сборке).
-
-### Обновления
-Любой `git push` в репозиторий автоматически передеплоит и Netlify, и Railway.
-
-### Быстрая проверка после деплоя
-- Открой `https://<адрес API>/health` → должно быть `{"ok":true,...}`.
-- Зарегистрируйся, найди друга по логину, отправь сообщение.
-
-## Переменные окружения сервера
-| Переменная | Назначение | По умолчанию |
-|---|---|---|
-| `PORT` | порт API | 3000 |
-| `JWT_SECRET` | подпись токенов | dev-secret (смени!) |
-| `JWT_TTL` | срок жизни токена | 7d |
-| `DB_PATH` | путь к файлу БД SQLite | `./saturn.db` |
-| `UPLOADS_DIR` | папка аватаров и вложений | `./uploads` |
-
-## Клиент
-| Переменная | Назначение | По умолчанию |
-|---|---|---|
-| `VITE_API_URL` | адрес API (без `/` в конце) | `http://localhost:3000` |
-
-## Тесты
-```bash
-cd server && npm test    # 73 интеграционных проверки
+```text
+messenger-saturn/
+├── client/
+│   ├── src/
+│   ├── public/
+│   ├── package.json
+│   └── vite.config.*
+│
+├── server/
+│   ├── src/
+│   ├── package.json
+│   ├── saturn.db
+│   └── uploads/
+│
+├── netlify.toml
+└── README.md
 ```
 
-## Как тестировать вдвоём
-1. Каждый открывает адрес клиента и регистрируется (email → логин/никнейм → пароль).
-2. В поиске введите логин друга → клик по нему → пишите.
-3. Непрочитанные — красный бейдж на чате; закрепляйте чаты ПКМ; картинки открываются в приложении.
+## Getting Started
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/takunamii/messenger-saturn.git
+cd messenger-saturn
+```
+
+### 2. Start the server
+
+```bash
+cd server
+npm install
+npm start
+```
+
+The API will be available at:
+
+```text
+http://localhost:3000
+```
+
+### 3. Start the client
+
+Open another terminal:
+
+```bash
+cd client
+npm install
+npm run dev
+```
+
+The development server will be available at:
+
+```text
+http://localhost:5173
+```
+
+## Environment Variables
+
+### Server
+
+| Variable      | Description                    | Default       |
+| ------------- | ------------------------------ | ------------- |
+| `PORT`        | API port                       | `3000`        |
+| `JWT_SECRET`  | Secret used to sign JWT tokens | `dev-secret`  |
+| `JWT_TTL`     | JWT lifetime                   | `7d`          |
+| `DB_PATH`     | SQLite database path           | `./saturn.db` |
+| `UPLOADS_DIR` | Uploaded files directory       | `./uploads`   |
+
+Example:
+
+```env
+PORT=3000
+JWT_SECRET=your-long-random-secret
+JWT_TTL=7d
+DB_PATH=./saturn.db
+UPLOADS_DIR=./uploads
+```
+
+For production, use a strong randomly generated JWT secret.
+
+### Client
+
+```env
+VITE_API_URL=http://localhost:3000
+```
+
+For production, set `VITE_API_URL` to the deployed backend URL.
+
+## Deployment
+
+The application can be deployed using:
+
+* **Netlify** for the frontend;
+* **Railway** for the backend.
+
+### Backend
+
+The backend should use the `server` directory as its root directory.
+
+For a production deployment, configure:
+
+```env
+JWT_SECRET=your-production-secret
+DB_PATH=/data/saturn.db
+UPLOADS_DIR=/data/uploads
+```
+
+A persistent volume should be mounted to:
+
+```text
+/data
+```
+
+This allows the SQLite database and uploaded files to persist between deployments and restarts.
+
+### Frontend
+
+Set:
+
+```env
+VITE_API_URL=https://your-api-url
+```
+
+Build the frontend with:
+
+```bash
+npm run build
+```
+
+## Deployment Updates
+
+After connecting the repository to Netlify and Railway, changes pushed to GitHub can trigger automatic deployments.
+
+```bash
+git add .
+git commit -m "update"
+git push
+```
+
+## Project Goals
+
+Saturn was created as a full-stack project to practice:
+
+* React application architecture;
+* REST API development;
+* JWT authentication;
+* SQLite database integration;
+* file uploads;
+* frontend/backend communication;
+* responsive UI development;
+* automated testing;
+* production deployment.
+
+## License
+
+This project is intended for educational and portfolio purposes.
