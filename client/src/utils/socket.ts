@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { API_BASE } from './assetUrl';
 
 // сообщение с сервера (форма DTO эндпоинтов /chats)
 export interface ServerMessage {
@@ -25,14 +26,12 @@ export type WsEvent =
 
 type Listener = (event: WsEvent) => void;
 
-const WS_URL: string =
-    (import.meta.env?.VITE_WS_URL as string) ||
-    (() => {
-        // по умолчанию — тот же хост, что и страница (или дев-сервер :3000)
-        if (import.meta.env.DEV) return 'ws://localhost:3000/ws';
-        const { protocol, host } = window.location;
-        return `${protocol === 'https:' ? 'wss' : 'ws'}://${host}/ws`;
-    })();
+// WS-адрес: приоритет — VITE_WS_URL, иначе тот же хост, что и API (VITE_API_URL / localhost:3000)
+const WS_URL: string = (() => {
+    const explicit = import.meta.env?.VITE_WS_URL as string | undefined;
+    if (explicit) return explicit.replace(/\/$/, '');
+    return API_BASE.replace(/\/$/, '').replace(/^http/, 'ws') + '/ws';
+})();
 
 class SocketClient {
     private ws: WebSocket | null = null;
