@@ -9,7 +9,7 @@ import Avatar from '../../../components/Avatar';
 import DeleteConfirmModal from '../../../components/DeleteConfirmModal';
 import ChatContextMenu from '../../../components/ChatContextMenu';
 import { isUserOnline } from '../../../utils/formatLastSeen';
-import { useSocketEvents } from '../../../utils/socket';
+import { useSocketEvents, useSocketStatus } from '../../../utils/socket';
 
 export interface Chat {
     id: string;
@@ -49,6 +49,7 @@ const Sidebar: React.FC<{
     }, []);
 
     const refreshTimerRef = React.useRef<number | null>(null);
+    const wsConnected = useSocketStatus();
     const refreshChatsSoon = React.useCallback(() => {
         if (refreshTimerRef.current) return;
         refreshTimerRef.current = window.setTimeout(() => {
@@ -59,17 +60,17 @@ const Sidebar: React.FC<{
 
     React.useEffect(() => {
         refreshChats();
-        // страховочный поллинг раз в 60с (WS покрывает всё остальное)
-        const timer = setInterval(refreshChats, 60000);
+        // WS подключён — редкий страховочный поллинг; нет WS — чаще
+        const period = wsConnected ? 60000 : 10000;
+        const timer = setInterval(refreshChats, period);
         return () => {
             clearInterval(timer);
             if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
         };
-    }, [refreshChats]);
+    }, [refreshChats, wsConnected]);
 
     // realtime: список чатов обновляется мгновенно по WS-событиям
-    const humanizeType = (type?: string, text?: string) => {
-        switch (type) {
+    const humanizeType = (type?: string, text?: string) => {        switch (type) {
             case 'image': return 'Изображение';
             case 'video': return 'Видеофайл';
             case 'audio': return 'Голосовое сообщение';

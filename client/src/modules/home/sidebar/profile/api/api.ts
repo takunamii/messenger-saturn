@@ -5,7 +5,6 @@ import axios, { type AxiosError } from 'axios';
 export const getProfile = async (): Promise<UserProfile> => {
     try {
         const { data } = await axiosInstance.get('/users/me');
-        console.log('API Response (getProfile):', data);
         return {
             id: data._id,
             name: data.public.displayName,
@@ -31,7 +30,6 @@ export const getProfile = async (): Promise<UserProfile> => {
 
 export const updateProfile = async (dto: EditUserDto): Promise<UserProfile> => {
     try {
-        console.log('Sending update request with data:', dto);
         const { data } = await axiosInstance.put('/users/me', {
             displayName: dto.displayName,
             username: dto.username,
@@ -39,7 +37,6 @@ export const updateProfile = async (dto: EditUserDto): Promise<UserProfile> => {
             profileLink: dto.profileLink,
             birthDate: dto.birthDate
         });
-        console.log('API Response (updateProfile):', data);
         return {
             id: data._id,
             name: data.public.displayName,

@@ -7,7 +7,7 @@ import VoicePlayer from '../../../components/VoicePlayer';
 import DeleteConfirmModal from '../../../components/DeleteConfirmModal';
 import { formatLastSeen } from '../../../utils/formatLastSeen';
 import { assetUrl } from '../../../utils/assetUrl';
-import { socket, useSocketEvents } from '../../../utils/socket';
+import { socket, useSocketEvents, useSocketStatus } from '../../../utils/socket';
 
 interface Message {
     id: string;
@@ -1343,6 +1343,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
             loadOlder();
         }
     };
+
+    // страховка: если WS недоступен — подхватываем сообщения лёгким поллингом
+    const wsConnected = useSocketStatus();
+    React.useEffect(() => {
+        if (wsConnected || !selectedChatId) return;
+        const timer = setInterval(fetchMessages, 5000);
+        return () => clearInterval(timer);
+    }, [wsConnected, selectedChatId, fetchMessages]);
 
     // realtime: события WebSocket вместо поллинга
     useSocketEvents((event) => {
