@@ -14,8 +14,11 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 
-// загруженные аватары
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+// загруженные аватары и вложения: имена файлов неизменны — кэшируем на месяц
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'), {
+  maxAge: '30d',
+  immutable: true
+}));
 
 app.get('/health', (req, res) => res.json({ ok: true, name: 'saturn-api' }));
 

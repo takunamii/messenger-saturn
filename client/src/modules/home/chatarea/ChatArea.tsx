@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { getMessages, sendMessage, getPartnerStatus, sendAttachment, getChatMedia, forwardMessage, deleteMessage, getChats, getPinnedMessages, pinMessage, unpinMessage, markChatRead } from '../sidebar/usersearch/api/api';
+import { getMessages, sendMessage, getPartnerStatus, sendAttachment, getChatMedia, forwardMessage, deleteMessage, getChats, getPinnedMessages, pinMessage, unpinMessage, markChatRead, reactMessage } from '../sidebar/usersearch/api/api';
 import type { ChatMessage, PublicUserStatus, ChatAttachment } from '../sidebar/usersearch/api/api';
 import type { Chat as ChatListItem } from '../sidebar/Sidebar';
 import Avatar from '../../../components/Avatar';
@@ -8,6 +8,9 @@ import DeleteConfirmModal from '../../../components/DeleteConfirmModal';
 import { formatLastSeen } from '../../../utils/formatLastSeen';
 import { assetUrl } from '../../../utils/assetUrl';
 import { socket, useSocketEvents, useSocketStatus } from '../../../utils/socket';
+import { useLongPress } from '../../../utils/longPress';
+import { REACTION_EMOJIS, emojiUrl } from '../../../utils/reactions';
+import type { MessageReaction } from '../../../utils/reactions';
 
 interface Message {
     id: string;
@@ -19,6 +22,7 @@ interface Message {
     replyTo?: { id: string; text: string; senderId: string; type: string } | null;
     forwardedFrom?: { id: string; displayName: string } | null;
     pinned?: boolean;
+    reactions?: MessageReaction[];
 }
 
 interface ChatAreaProps {
@@ -194,21 +198,57 @@ const humanizeType = (type: string): string => {
     }
 };
 
+const ReactionBar: React.FC<{ message: Message; onToggleReaction: (m: Message, emoji: string) => void }> = ({ message, onToggleReaction }) => {
+    if (!message.reactions || message.reactions.length === 0) return null;
+    return (
+        <div className={`flex flex-wrap gap-1 mt-1 ${message.sender === 'me' ? 'justify-end md:justify-start' : 'justify-start'}`}>
+            {message.reactions.map((r) => (
+                <button
+                    key={r.emoji}
+                    onClick={() => onToggleReaction(message, r.emoji)}
+                    className={`flex items-center gap-1 h-[24px] px-1.5 rounded-full border text-[11px] font-medium transition-all active:scale-95 ${
+                        r.mine
+                            ? 'bg-[#5865F2]/25 border-[#5865F2] text-white'
+                            : 'bg-[#1c2530] border-white/10 text-[#8f9aa7] hover:border-white/25 hover:text-white'
+                    }`}
+                    title={r.mine ? 'Убрать реакцию' : 'Поставить реакцию'}
+                >
+                    <img src={emojiUrl(r.emoji)} alt={r.emoji} className="w-[14px] h-[14px]" draggable={false} />
+                    {r.count > 1 && <span className="tabular-nums">{r.count}</span>}
+                </button>
+            ))}
+        </div>
+    );
+};
+
+// выравнивание строки сообщения: на узких экранах — по сторонам, на широких — всё слева
+// (isMe → justify-end на мобильных, justify-start на md+; задаётся в MessageBubble)
+
 const MessageBubble: React.FC<{
     message: Message;
     showAvatar: boolean;
     chatName: string;
     partnerAvatar?: string | null;
     onContextMenu: (e: React.MouseEvent, message: Message) => void;
+    onLongPress: (pos: { x: number; y: number }, message: Message) => void;
     onOpenForwardedAuthor?: (userId: string, name: string) => void;
     onOpenImage?: (url: string) => void;
-}> = ({ message, showAvatar, chatName, partnerAvatar, onContextMenu, onOpenForwardedAuthor, onOpenImage }) => {
+    onToggleReaction: (m: Message, emoji: string) => void;
+    /** в групповых чатах показываем аватар автора слева; в личных — не показываем (и не резервируем место) */
+    isGroup?: boolean;
+}> = ({ message, showAvatar, chatName, partnerAvatar, onContextMenu, onLongPress, onOpenForwardedAuthor, onOpenImage, onToggleReaction, isGroup = false }) => {
     const isMe = message.sender === 'me';
     const type = message.type || 'text';
+    // на мобильных долгое нажатие открывает то же меню, что и ПКМ
+    const longPress = useLongPress((pos) => onLongPress(pos, message));
 
     if (type === 'deleted') {
         return (
-            <div className={`flex mb-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
+            <div
+                {...longPress}
+                onContextMenu={(e) => onContextMenu(e, message)}
+                className={`flex mb-1 ${isMe ? 'justify-end md:justify-start' : 'justify-start'}`}
+            >
                 <p className="italic text-xs text-[#8f9aa7] px-3 py-1.5">Сообщение удалено</p>
             </div>
         );
@@ -219,7 +259,7 @@ const MessageBubble: React.FC<{
         : null;
 
     const bubble = type === 'image' ? (
-        <div className={`max-w-[78%] sm:max-w-[70%] bg-transparent rounded-2xl rounded-bl-md overflow-hidden ${message.pinned ? 'ring-1 ring-[#e8a33d]/60' : ''}`}>
+        <div className={`bg-transparent rounded-2xl rounded-bl-md overflow-hidden ${message.pinned ? 'ring-1 ring-[#e8a33d]/60' : ''}`}>
             {message.forwardedFrom && (
                 <button
                     onClick={() => onOpenForwardedAuthor?.(message.forwardedFrom!.id, message.forwardedFrom!.displayName)}
@@ -242,7 +282,7 @@ const MessageBubble: React.FC<{
         </div>
     ) : (
         <div
-            className={`max-w-[78%] sm:max-w-[70%] px-3.5 py-2 ${
+            className={`px-3.5 py-2 ${
                 isMe
                     ? 'bg-[#2b5278] text-white rounded-2xl rounded-br-md'
                     : 'bg-[#1c2530] text-white rounded-2xl rounded-bl-md'
@@ -280,15 +320,20 @@ const MessageBubble: React.FC<{
 
     return (
         <div
+            {...longPress}
             onContextMenu={(e) => onContextMenu(e, message)}
-            className={`flex items-end gap-2 mb-1 ${isMe ? 'justify-end' : 'justify-start'}`}
+            style={{ WebkitTouchCallout: 'none' }}
+            className={`flex items-end gap-2 mb-1 ${isMe ? 'justify-end md:justify-start' : 'justify-start'}`}
         >
-            {!isMe && (
+            {isGroup && !isMe && (
                 <div className="w-8 shrink-0">
                     {showAvatar && <Avatar name={chatName} src={partnerAvatar || undefined} size={28} />}
                 </div>
             )}
-            {bubble}
+            <div className="flex flex-col min-w-0 max-w-[78%] sm:max-w-[70%]">
+                {bubble}
+                <ReactionBar message={message} onToggleReaction={onToggleReaction} />
+            </div>
         </div>
     );
 };
@@ -547,11 +592,15 @@ const MessageContextMenu: React.FC<{
     onForward: (m: Message) => void;
     onDeletePrompt: (m: Message) => void;
     onTogglePin: (m: Message) => void;
-}> = ({ message, x, y, onClose, onReply, onForward, onDeletePrompt, onTogglePin }) => {
+    onReact: (m: Message, emoji: string) => void;
+}> = ({ message, x, y, onClose, onReply, onForward, onDeletePrompt, onTogglePin, onReact }) => {
     const menuRef = React.useRef<HTMLDivElement>(null);
     const [pos, setPos] = React.useState({ left: x, top: y, visible: false });
+    // на тач-устройствах после long-press приходит синтетический клик — не закрываем меню по нему
+    const openedAtRef = React.useRef(Date.now());
 
     React.useEffect(() => {
+        openedAtRef.current = Date.now();
         // позиционируем с учётом границ экрана (после первого рендера, когда известен размер)
         const el = menuRef.current;
         if (!el) return;
@@ -566,6 +615,8 @@ const MessageContextMenu: React.FC<{
 
     React.useEffect(() => {
         const onDocMouseDown = (e: MouseEvent) => {
+            // игнорируем клик, «догнавший» меню сразу после открытия (touch)
+            if (Date.now() - openedAtRef.current < 500) return;
             if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose();
         };
         const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -580,14 +631,28 @@ const MessageContextMenu: React.FC<{
     }, [onClose]);
 
     const itemCls = 'w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white hover:bg-[#5865F2]/80 transition-colors text-left';
+    const isLocal = message.id.startsWith('local-');
 
     return (
         <div
             ref={menuRef}
-            className="fixed z-[60] min-w-[200px] bg-[#1c2530] border border-white/10 rounded-xl shadow-2xl shadow-black/50 py-1.5 overflow-hidden"
+            className="fixed z-[60] min-w-[220px] bg-[#1c2530] border border-white/10 rounded-xl shadow-2xl shadow-black/50 py-1.5 overflow-hidden"
             style={{ left: pos.left, top: pos.top, opacity: pos.visible ? 1 : 0, pointerEvents: pos.visible ? 'auto' : 'none' }}
             onContextMenu={(e) => e.preventDefault()}
         >
+            <div className="flex gap-0.5 px-1.5 pb-1.5 border-b border-white/10 mb-1">
+                {REACTION_EMOJIS.map((emoji) => (
+                    <button
+                        key={emoji}
+                        onClick={() => { if (!isLocal) onReact(message, emoji); onClose(); }}
+                        disabled={isLocal}
+                        className="flex-1 min-w-0 h-9 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors active:scale-90 disabled:opacity-40"
+                        title={`Реакция ${emoji}`}
+                    >
+                        <img src={emojiUrl(emoji)} alt={emoji} className="w-[22px] h-[22px] pointer-events-none" draggable={false} />
+                    </button>
+                ))}
+            </div>
             <button className={itemCls} onClick={() => { onReply(message); onClose(); }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                     <polyline points="9 14 4 9 9 4" />
@@ -822,7 +887,7 @@ const ChatInfoPanel: React.FC<{
 
     React.useEffect(() => {
         if (selectedChatId) {
-            getChatMedia(selectedChatId).then(setMedia);
+            getCachedMedia(selectedChatId, mediaVersion).then(setMedia);
         }
     }, [selectedChatId, mediaVersion]);
 
@@ -962,15 +1027,16 @@ const PartnerProfileModal: React.FC<{
     partner: PublicUserStatus | null;
     chatId: string | null;
     onOpenImage?: (url: string) => void;
-}> = ({ open, onClose, partner, chatId, onOpenImage }) => {
+    mediaVersion?: number;
+}> = ({ open, onClose, partner, chatId, onOpenImage, mediaVersion }) => {
     const [media, setMedia] = React.useState<ChatAttachment[] | null>(null);
 
     React.useEffect(() => {
         if (open && chatId) {
             setMedia(null);
-            getChatMedia(chatId).then(setMedia);
+            getCachedMedia(chatId, mediaVersion ?? 'profile').then(setMedia);
         }
-    }, [open, chatId]);
+    }, [open, chatId, mediaVersion]);
 
     if (!open || !partner) return null;
 
@@ -1103,6 +1169,55 @@ const PartnerProfileModal: React.FC<{
 
 const messagesCache = new Map<string, Message[]>();
 
+// Долговременный кэш переписок в localStorage: старые сообщения не запрашиваются
+// повторно при каждом открытии чата (запрашивается только свежая страница, старая
+// история досохраняется и объединяется).
+const MSG_LS_PREFIX = 'saturn-msgs-';
+const MSG_LS_LIMIT = 120;
+
+const readMsgCache = (chatId: string): { messages: Message[]; hasMore: boolean } | null => {
+    try {
+        const raw = localStorage.getItem(MSG_LS_PREFIX + chatId);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as { messages: Array<Omit<Message, 'timestamp'> & { timestamp: string }>; hasMore: boolean };
+        if (!Array.isArray(parsed.messages)) return null;
+        return {
+            messages: parsed.messages.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })),
+            hasMore: !!parsed.hasMore,
+        };
+    } catch {
+        return null;
+    }
+};
+
+const writeMsgCache = (chatId: string, messages: Message[], hasMore: boolean) => {
+    try {
+        // сохраняем самые свежие, но не теряем более старые, которые уже в кэше
+        const trimmed = messages
+            .filter((m) => !m.id.startsWith('local-'))
+            .slice(-MSG_LS_LIMIT)
+            .map((m) => ({ ...m, timestamp: m.timestamp.toISOString() }));
+        localStorage.setItem(MSG_LS_PREFIX + chatId, JSON.stringify({ messages: trimmed, hasMore }));
+    } catch { /* переполнение localStorage игнорируем */ }
+};
+
+const clearMsgCache = (chatId: string) => {
+    messagesCache.delete(chatId);
+    try { localStorage.removeItem(MSG_LS_PREFIX + chatId); } catch { /* ignore */ }
+};
+
+// Кэш галереи вложений: панель «Информация» не перезапрашивает список картинок заново
+const mediaCache = new Map<string, { data: ChatAttachment[]; at: number }>();
+const MEDIA_TTL = 60_000;
+const getCachedMedia = async (chatId: string, version: unknown): Promise<ChatAttachment[]> => {
+    const key = `${chatId}:${String(version)}`;
+    const hit = mediaCache.get(key);
+    if (hit && Date.now() - hit.at < MEDIA_TTL) return hit.data;
+    const data = await getChatMedia(chatId);
+    mediaCache.set(key, { data, at: Date.now() });
+    return data;
+};
+
 const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', onSendMessage, onBack, onSelectChat }) => {
     const [message, setMessage] = React.useState('');
     const [messages, setMessages] = React.useState<Message[]>([]);
@@ -1147,6 +1262,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
         const next = fn(messagesRef.current);
         messagesRef.current = next;
         messagesCache.set(chatId, next);
+        writeMsgCache(chatId, next, hasMoreRef.current);
         setMessages(next);
     }, []);
 
@@ -1174,6 +1290,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
         replyTo: m.replyTo,
         forwardedFrom: m.forwardedFrom,
         pinned: pinnedIdsRef.current.has(m.id),
+        reactions: m.reactions ?? [],
     });
 
     const fetchPinned = React.useCallback(async () => {
@@ -1249,9 +1366,17 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                     Math.abs(s.timestamp.getTime() - l.timestamp.getTime()) < 15000
                 )
             );
-            const merged = [...server, ...stillLocal].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+            // merge: свежая страница с сервера + старые сообщения из кэша (id-дедуп).
+            // Так старая история не перезапрашивается и не пропадает при открытии чата.
+            const serverIds = new Set(server.map(s => s.id));
+            const oldestFetched = server.length ? server[0].timestamp.getTime() : Number.MAX_SAFE_INTEGER;
+            const cachedOlder = messagesRef.current.filter(
+                (m) => !m.id.startsWith('local-') && !serverIds.has(m.id) && m.timestamp.getTime() < oldestFetched
+            );
+            const merged = [...cachedOlder, ...server, ...stillLocal].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
             messagesCache.set(chatId, merged);
             messagesRef.current = merged;
+            writeMsgCache(chatId, merged, more);
             hasMoreRef.current = more;
             setHasMore(more);
             setMessages(merged);
@@ -1291,15 +1416,27 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
     }, [applyMessages]);
 
     React.useEffect(() => {
-        // мгновенный показ из кэша — без вспышки загрузки, если чат уже открывали
-        const cached = selectedChatId ? messagesCache.get(selectedChatId) : undefined;
+        // мгновенный показ из кэша: сначала память (между переключениями чатов),
+        // затем localStorage (старая история после перезагрузки страницы)
+        let cached = selectedChatId ? messagesCache.get(selectedChatId) : undefined;
+        let cachedHasMore = false;
+        if (!cached && selectedChatId) {
+            const fromLs = readMsgCache(selectedChatId);
+            if (fromLs && fromLs.messages.length) {
+                cached = fromLs.messages;
+                cachedHasMore = fromLs.hasMore;
+                messagesCache.set(selectedChatId, fromLs.messages);
+            }
+        }
         setMessages(cached ? cached : []);
         messagesRef.current = cached ? cached : [];
         setPartnerTyping(null);
         needScrollBottomRef.current = true;
         setAtBottom(true);
         if (!cached) setLoading(true);
-        // кэш мог быть обрезан по «свежим 50» — точных знаний hasMore нет; загружаем заново
+        // если есть кэш — hasMore уже известен; всё равно сверяемся с сервером (свежая страница)
+        hasMoreRef.current = cachedHasMore;
+        setHasMore(cachedHasMore);
         fetchMessages(!cached);
     }, [selectedChatId, fetchMessages]);
 
@@ -1366,6 +1503,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                     type: (m.type as ChatMessage['type']) ?? 'text',
                     replyTo: m.replyTo ?? null,
                     forwardedFrom: m.forwardedFrom ?? null,
+                    reactions: [],
                     createdAt: m.createdAt
                 });
                 // автопрокрутка вниз только если пользователь и так у последнего сообщения
@@ -1396,8 +1534,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
             fetchPinned();
             return;
         }
+        if (event.type === 'message:reaction' && event.chatId === selectedChatId) {
+            // реакции обновляются мгновенно у обоих участников
+            applyMessages((prev) => prev.map((m) => (m.id === event.messageId ? { ...m, reactions: event.reactions } : m)));
+            return;
+        }
         if (event.type === 'chat:deleted' && event.chatId === selectedChatId && event.mode === 'all') {
             applyMessages(() => []);
+            clearMsgCache(event.chatId);
             setPinnedMessages([]);
             return;
         }
@@ -1540,6 +1684,35 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
         }
     };
 
+    // реакция на сообщение: оптимистичный toggle, затем подтверждение от сервера/WS
+    const handleToggleReaction = React.useCallback((msg: Message, emoji: string) => {
+        if (!selectedChatId || msg.id.startsWith('local-')) return;
+        const chatId = selectedChatId;
+        const apply = (reactions: MessageReaction[]) => {
+            applyMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, reactions } : m)));
+        };
+        const prevList = msg.reactions ?? [];
+        const mineExisting = prevList.find((r) => r.emoji === emoji && r.mine);
+        let optimistic: MessageReaction[];
+        if (mineExisting) {
+            optimistic = prevList
+                .map((r) => (r.emoji === emoji ? { ...r, count: r.count - 1, mine: false } : r))
+                .filter((r) => r.count > 0);
+        } else {
+            const same = prevList.find((r) => r.emoji === emoji);
+            optimistic = same
+                ? prevList.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, mine: true } : r))
+                : [...prevList, { emoji, count: 1, mine: true }];
+        }
+        apply(optimistic);
+        reactMessage(chatId, msg.id, emoji).then(apply).catch(() => apply(prevList));
+    }, [selectedChatId, applyMessages]);
+
+    // долгое нажатие на сообщении (мобильные) — то же меню, что и по ПКМ
+    const handleMessageLongPress = React.useCallback((pos: { x: number; y: number }, m: Message) => {
+        setContextMenu({ message: m, x: pos.x, y: pos.y });
+    }, []);
+
     // переход к закреплённому сообщению с короткой подсветкой
     const highlightIdRef = React.useRef<string | null>(null);
     const handleJumpToPinned = (id: string) => {
@@ -1622,23 +1795,27 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                                 <span className="w-5 h-5 border-2 border-[#5865F2] border-t-transparent rounded-full animate-spin" />
                             </div>
                         )}
-                        {messages.map((msg, i) => {
-                            const prev = messages[i - 1];
-                            const showAvatar = !prev || prev.sender !== msg.sender;
-                            return (
-                                <div key={msg.id} id={`msg-${msg.id}`} className="scroll-mt-20">
-                                    <MessageBubble
-                                        message={msg}
-                                        showAvatar={showAvatar}
-                                        chatName={chatName}
-                                        partnerAvatar={partnerStatus?.avatar || null}
-                                        onContextMenu={(e, m) => { e.preventDefault(); setContextMenu({ message: m, x: e.clientX, y: e.clientY }); }}
-                                        onOpenForwardedAuthor={handleOpenForwardedAuthor}
-                                        onOpenImage={setLightboxUrl}
-                                    />
-                                </div>
-                            );
-                        })}
+                        <div className="w-full">
+                            {messages.map((msg, i) => {
+                                const prev = messages[i - 1];
+                                const showAvatar = !prev || prev.sender !== msg.sender;
+                                return (
+                                    <div key={msg.id} id={`msg-${msg.id}`} className="scroll-mt-20">
+                                        <MessageBubble
+                                            message={msg}
+                                            showAvatar={showAvatar}
+                                            chatName={chatName}
+                                            partnerAvatar={partnerStatus?.avatar || null}
+                                            onContextMenu={(e, m) => { e.preventDefault(); setContextMenu({ message: m, x: e.clientX, y: e.clientY }); }}
+                                            onLongPress={handleMessageLongPress}
+                                            onOpenForwardedAuthor={handleOpenForwardedAuthor}
+                                            onOpenImage={setLightboxUrl}
+                                            onToggleReaction={handleToggleReaction}
+                                        />
+                                    </div>
+                                );
+                            })}
+                        </div>
                     </>
                 )}
                 <div ref={messagesEndRef} />
@@ -1725,6 +1902,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                 partner={partnerStatus}
                 chatId={selectedChatId}
                 onOpenImage={setLightboxUrl}
+                mediaVersion={messages.length}
             />
 
             {contextMenu && (
@@ -1737,6 +1915,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({ selectedChatId, chatName = 'Chat', 
                     onForward={(m) => setForwardMessage(m)}
                     onDeletePrompt={(m) => setDeleteTarget(m)}
                     onTogglePin={handleTogglePin}
+                    onReact={handleToggleReaction}
                 />
             )}
 

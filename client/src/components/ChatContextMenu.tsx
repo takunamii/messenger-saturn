@@ -10,10 +10,14 @@ interface ChatContextMenuProps {
 
 const ChatContextMenu: React.FC<ChatContextMenuProps> = ({ menu, onClose, onTogglePin, onDeletePrompt }) => {
     const menuRef = React.useRef<HTMLDivElement>(null);
+    const openedAtRef = React.useRef(0);
 
     React.useEffect(() => {
         if (!menu) return;
+        openedAtRef.current = Date.now();
         const onDocMouseDown = (e: MouseEvent) => {
+            // на тач-устройствах после long-press приходит синтетический клик — игнорируем
+            if (Date.now() - openedAtRef.current < 500) return;
             if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose();
         };
         const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();

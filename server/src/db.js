@@ -6,7 +6,7 @@ const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'saturn.db');
 
 const db = new sqlite3.Database(DB_PATH);
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 db.serialize(() => {
   db.get('PRAGMA user_version', (err, row) => {
@@ -153,6 +153,17 @@ db.serialize(() => {
           FOREIGN KEY (pinned_by) REFERENCES users(id) ON DELETE CASCADE
         )`);
       }
+
+      db.run(`CREATE TABLE IF NOT EXISTS message_reactions (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (message_id, user_id, emoji),
+      FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`);
 
       db.run('CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, recipient_id, created_at)');
       db.run('CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id, created_at)');

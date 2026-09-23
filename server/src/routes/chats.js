@@ -19,6 +19,25 @@ function sortPair(a, b) {
   return a < b ? [a, b] : [b, a];
 }
 
+// Реакции для списка сообщений: { [messageId]: [{ emoji, count, mine }] }
+async function reactionsFor(messageIds, me) {
+  if (!messageIds.length) return {};
+  const placeholders = messageIds.map(() => '?').join(',');
+  const rows = await all(
+    `SELECT message_id, emoji, user_id FROM message_reactions
+     WHERE message_id IN (${placeholders}) ORDER BY created_at ASC`,
+    messageIds
+  );
+  const byMsg = {};
+  for (const r of rows) {
+    const groups = (byMsg[r.message_id] ||= {});
+    const g = (groups[r.emoji] ||= { emoji: r.emoji, count: 0, mine: false });
+    g.count += 1;
+    if (r.user_id === me) g.mine = true;
+  }
+  return Object.fromEntries(Object.entries(byMsg).map(([mid, groups]) => [mid, Object.values(groups)]));
+}
+
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, '..', '..', 'uploads');
 const ATTACHMENTS_DIR = path.join(UPLOADS_DIR, 'attachments');
 require('fs').mkdirSync(ATTACHMENTS_DIR, { recursive: true });
@@ -151,6 +170,8 @@ router.get('/chats/:userId/messages', authenticate, async (req, res, next) => {
       [me, partnerId, partnerId, me]
     );
 
+    const reactionMap = await reactionsFor(pageRows.map((r) => r.id), me);
+
     const mapMessageRow = (m) => ({
       _id: m.id,
       senderId: m.sender_id,
@@ -166,8 +187,10 @@ router.get('/chats/:userId/messages', authenticate, async (req, res, next) => {
         type: m.reply_type || 'text'
       } : null,
       forwardedFrom: m.forwarded_from ? { id: m.forwarded_from, displayName: m.fwd_name } : null,
+      reactions: reactionMap[m.id] || [],
       createdAt: m.created_at
     });
+
 
     return res.json({
       messages: pageRows.map(mapMessageRow),
@@ -339,6 +362,50 @@ router.post('/chats/:userId/messages', authenticate, async (req, res, next) => {
     emitMessageEvent(partnerId, me, { type: 'message:new', message });
 
     return res.status(201).json(message);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /chats/:userId/messages/:messageId/reactions — поставить/снять реакцию (toggle)
+router.post('/chats/:userId/messages/:messageId/reactions', authenticate, async (req, res, next) => {
+  try {
+    const me = req.userId;
+    const partnerId = req.params.userId;
+    const messageId = req.params.messageId;
+    const emoji = req.body && typeof req.body.emoji === 'string' ? req.body.emoji : '';
+
+    if (!emoji || emoji.length > 16) {
+      return res.status(400).json({ message: 'Некорректная реакция' });
+    }
+
+    const msg = await get(
+      `SELECT id FROM messages
+       WHERE id = ? AND ((sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?))`,
+      [messageId, me, partnerId, partnerId, me]
+    );
+    if (!msg) return res.status(404).json({ message: 'Сообщение не найдено' });
+
+    const existing = await get(
+      'SELECT id FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?',
+      [messageId, me, emoji]
+    );
+    if (existing) {
+      await run('DELETE FROM message_reactions WHERE id = ?', [existing.id]);
+    } else {
+      await run(
+        'INSERT INTO message_reactions (id, message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)',
+        [uid(), messageId, me, emoji, now()]
+      );
+    }
+
+    // каждому участнику — персонализированный список (у каждого свой флаг mine)
+    const mineMap = await reactionsFor([messageId], me);
+    const partnerMap = await reactionsFor([messageId], partnerId);
+    sendToUser(me, { type: 'message:reaction', chatId: partnerId, messageId, reactions: mineMap[messageId] || [] });
+    sendToUser(partnerId, { type: 'message:reaction', chatId: me, messageId, reactions: partnerMap[messageId] || [] });
+
+    return res.json({ ok: true, reactions: mineMap[messageId] || [] });
   } catch (err) {
     next(err);
   }

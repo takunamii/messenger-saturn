@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { API_BASE } from './assetUrl';
+import type { MessageReaction } from './reactions';
 
 // сообщение с сервера (форма DTO эндпоинтов /chats)
 export interface ServerMessage {
@@ -19,6 +20,7 @@ export type WsEvent =
     | { type: 'messages:read'; chatId: string; at: string }
     | { type: 'message:deleted'; chatId: string; messageId: string; mode: 'self' | 'all'; partnerId?: string }
     | { type: 'message:pinned'; chatId: string; messageId: string; pinned: boolean; partnerId?: string }
+    | { type: 'message:reaction'; chatId: string; messageId: string; reactions: MessageReaction[]; partnerId?: string }
     | { type: 'chat:deleted'; chatId: string; mode: 'self' | 'all'; partnerId?: string }
     | { type: 'presence'; userId: string; online: boolean; at: string }
     | { type: 'presence:init'; online: string[] }

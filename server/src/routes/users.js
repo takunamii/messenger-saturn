@@ -3,7 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const { run, get, all, uid, now } = require('../db');
-const { authenticate, ONLINE_WINDOW_MS } = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
+const { isOnline } = require('../ws');
 
 const router = express.Router();
 
@@ -26,15 +27,15 @@ const avatarUpload = multer({
   }
 });
 
-// Статус по времени последней активности: online — активность за последнюю минуту
-function computeStatus(lastSeen) {
-  if (!lastSeen) return 'offline';
-  const diffMs = Date.now() - new Date(lastSeen).getTime();
-  return diffMs <= ONLINE_WINDOW_MS ? 'online' : 'offline';
+// Статус по фактическому WS-соединению: онлайн = есть живое соединение.
+// (окно по last_seen не годится: last_seen обновляется и в момент выхода,
+// из-за чего пользователь ещё минуту считался «онлайн»)
+function computeStatus(userId) {
+  return isOnline(userId) ? 'online' : 'offline';
 }
 
 function publicPayload(row, { self = false } = {}) {
-  const status = self ? 'online' : computeStatus(row.last_seen);
+  const status = self ? 'online' : computeStatus(row.id);
   return {
     displayName: row.display_name,
     username: row.username,
