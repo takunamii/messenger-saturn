@@ -1,6 +1,7 @@
 import axiosInstance from './axiosInstance';
 import type { Chat, User } from '../../Sidebar';
 import type { AxiosError } from 'axios';
+import type { MessageReaction } from '../../../../../utils/reactions';
 
 export interface ChatMessage {
     id: string;
@@ -10,6 +11,7 @@ export interface ChatMessage {
     type: MessageKind;
     replyTo: { id: string; senderId: string; text: string; type: string } | null;
     forwardedFrom: { id: string; displayName: string } | null;
+    reactions: MessageReaction[];
     createdAt: string;
 }
 
@@ -42,6 +44,7 @@ interface MessageDto {
     payload?: { payload?: string };
     replyTo?: { id: string; senderId: string; text: string; type: string } | null;
     forwardedFrom?: { id: string; displayName: string } | null;
+    reactions?: MessageReaction[];
     pinnedBy?: string;
     pinnedAt?: string;
 }
@@ -157,6 +160,7 @@ export const getMessages = async (userId: string, before?: string): Promise<{ me
             type: msg.type ?? 'text',
             replyTo: msg.replyTo ?? null,
             forwardedFrom: msg.forwardedFrom ?? null,
+            reactions: msg.reactions ?? [],
             createdAt: msg.createdAt
         }));
         return { messages, hasMore: !!data.hasMore };
@@ -314,6 +318,7 @@ export const getPinnedMessages = async (userId: string): Promise<ChatMessage[]> 
             type: msg.type ?? 'text',
             replyTo: msg.replyTo ?? null,
             forwardedFrom: msg.forwardedFrom ?? null,
+            reactions: msg.reactions ?? [],
             createdAt: msg.createdAt
         }));
     } catch (error: unknown) {
@@ -341,6 +346,21 @@ export const unpinMessage = async (userId: string, messageId: string): Promise<v
     } catch (error: unknown) {
         const axiosError = error as AxiosError<{ message: string }>;
         console.error('Failed to unpin message:', axiosError.response?.data || axiosError.message);
+        throw error;
+    }
+};
+
+// Поставить/снять реакцию (toggle)
+export const reactMessage = async (userId: string, messageId: string, emoji: string): Promise<MessageReaction[]> => {
+    try {
+        const { data } = await axiosInstance.post<{ ok: boolean; reactions: MessageReaction[] }>(
+            `/chats/${userId}/messages/${messageId}/reactions`,
+            { emoji }
+        );
+        return data.reactions ?? [];
+    } catch (error: unknown) {
+        const axiosError = error as AxiosError<{ message: string }>;
+        console.error('Failed to react to message:', axiosError.response?.data || axiosError.message);
         throw error;
     }
 };

@@ -281,6 +281,33 @@ function check(name, cond, extra) {
   r = await req('GET', '/users/me', { token: aliceTok });
   check('settings persisted', r.status === 200 && r.data.settings.sidebarWidth === 400, r.data.settings);
 
+  // реакции на сообщения
+  console.log('== Reactions ==');
+  r = await req('GET', `/chats/${bobId}/messages`, { token: aliceTok });
+  const reactionTarget = r.data.messages[r.data.messages.length - 1];
+  check('target message for reactions exists', r.status === 200 && !!reactionTarget && reactionTarget.reactions.length === 0, r);
+
+  r = await req('POST', `/chats/${bobId}/messages/${reactionTarget._id}/reactions`, { token: aliceTok, body: { emoji: '🔥' } });
+  check('add reaction ok', r.status === 200 && r.data.reactions.length === 1 && r.data.reactions[0].emoji === '🔥' && r.data.reactions[0].mine === true && r.data.reactions[0].count === 1, r.data);
+
+  r = await req('GET', `/chats/${aliceId}/messages`, { token: bobTok });
+  const bobViewReaction = r.data.messages.find((m) => m._id === reactionTarget._id);
+  check('reaction visible to partner with mine=false', !!bobViewReaction && bobViewReaction.reactions.length === 1 && bobViewReaction.reactions[0].count === 1 && bobViewReaction.reactions[0].mine === false, bobViewReaction);
+
+  // второй участник ставит ту же реакцию
+  r = await req('POST', `/chats/${aliceId}/messages/${reactionTarget._id}/reactions`, { token: bobTok, body: { emoji: '🔥' } });
+  check('second user same reaction count=2', r.status === 200 && r.data.reactions[0].count === 2 && r.data.reactions[0].mine === true, r.data);
+
+  // повторный клик снимает реакцию
+  r = await req('POST', `/chats/${bobId}/messages/${reactionTarget._id}/reactions`, { token: aliceTok, body: { emoji: '🔥' } });
+  check('toggle removes own reaction', r.status === 200 && r.data.reactions[0].count === 1 && r.data.reactions[0].mine === false, r.data);
+
+  r = await req('POST', `/chats/${bobId}/messages/${reactionTarget._id}/reactions`, { token: aliceTok, body: { emoji: '' } });
+  check('invalid emoji 400', r.status === 400, r);
+
+  r = await req('POST', `/chats/${bobId}/messages/unknown-id/reactions`, { token: aliceTok, body: { emoji: '🔥' } });
+  check('reaction to unknown message 404', r.status === 404, r);
+
   // удаление чата для себя
   r = await req('DELETE', `/chats/${eveId}?mode=self`, { token: aliceTok });
   check('delete chat for self', r.status === 200, r);
@@ -320,10 +347,12 @@ function check(name, cond, extra) {
   check('non-image avatar rejected 400', up2.status === 400, up2.status);
 
   console.log('== Presence (статусы) ==');
-  // alice активна (только что делала запросы) — bob видит её онлайн
+  // статус теперь определяется живым WS-соединением, а не 60-секундным окном по last_seen
+  // (last_seen обновляется и в момент выхода — из-за окна пользователь минуту висел «онлайн»)
+  // alice активна по HTTP, но без WS-соединения — не «онлайн»
   r = await req('GET', `/users/${aliceId}/public`, { token: bobTok });
   check('partner public profile', r.status === 200 && r.data._id === aliceId && r.data.public.displayName === 'Алиса Тест', r);
-  check('active user is online', r.data.public.status === 'online', r.data.public);
+  check('active user without WS is offline', r.data.public.status === 'offline', r.data.public);
 
   r = await req('GET', '/users/me', { token: aliceTok });
   check('self is always online', r.status === 200 && r.data.public.status === 'online' && !!r.data.public.lastSeenAt, r);
@@ -338,10 +367,10 @@ function check(name, cond, extra) {
   r = await req('GET', `/users/${bobId}/public`, { token: aliceTok });
   check('inactive user is offline with lastSeenAt', r.status === 200 && r.data.public.status === 'offline' && !!r.data.public.lastSeenAt, r.data.public);
 
-  // активность bob'а снова делает его онлайн
+  // свежая HTTP-активность без WS больше не делает пользователя «онлайн»
   await req('GET', '/users/me', { token: bobTok });
   r = await req('GET', `/users/${bobId}/public`, { token: aliceTok });
-  check('user back online after activity', r.status === 200 && r.data.public.status === 'online', r.data.public);
+  check('http activity alone does not fake online', r.status === 200 && r.data.public.status === 'offline', r.data.public);
 
   console.log(`\nИтого: ${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

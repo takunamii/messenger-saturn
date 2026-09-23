@@ -6,14 +6,15 @@ export function isUserOnline(lastSeenAt?: string | null): boolean {
     return Date.now() - new Date(lastSeenAt).getTime() <= ONLINE_WINDOW_MS;
 }
 
+// ВАЖНО: эта функция вызывается только для НЕ-онлайн пользователей (флаг online
+// приходит отдельно по WS/GET). Поэтому «онлайн» здесь возвращать нельзя —
+// иначе после выхода из сети минуту показывался бы серый «онлайн».
 export function formatLastSeen(lastSeenAt?: string | null): string {
     if (!lastSeenAt) return 'offline';
 
     const diffMs = Date.now() - new Date(lastSeenAt).getTime();
-    if (diffMs <= ONLINE_WINDOW_MS) return 'онлайн';
-
-    const min = Math.floor(diffMs / 60000);
-    if (min < 5) return 'был(а) только что';
+    const min = Math.max(0, Math.floor(diffMs / 60000));
+    if (min < 1) return 'был(а) только что';
     if (min < 60) return `был(а) ${min} мин назад`;
 
     const hours = Math.floor(min / 60);

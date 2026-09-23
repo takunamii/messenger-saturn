@@ -10,6 +10,7 @@ import DeleteConfirmModal from '../../../components/DeleteConfirmModal';
 import ChatContextMenu from '../../../components/ChatContextMenu';
 import { isUserOnline } from '../../../utils/formatLastSeen';
 import { useSocketEvents, useSocketStatus } from '../../../utils/socket';
+import { useLongPress } from '../../../utils/longPress';
 
 export interface Chat {
     id: string;
@@ -27,6 +28,48 @@ export interface User {
     name: string;
 }
 
+// Аватарка чата в свернутом режиме: клик — открыть, долгое нажатие — меню
+const CollapsedChatButton: React.FC<{
+    chat: Chat;
+    selected: boolean;
+    online: boolean;
+    onSelect: () => void;
+    onMenu: (chat: Chat, pos: { x: number; y: number }) => void;
+}> = ({ chat, selected, online, onSelect, onMenu }) => {
+    const longPress = useLongPress((pos) => onMenu(chat, pos));
+    return (
+        <button
+            onClick={() => { if (longPress.didFire()) return; onSelect(); }}
+            onContextMenu={(e) => { e.preventDefault(); onMenu(chat, { x: e.clientX, y: e.clientY }); }}
+            {...longPress}
+            style={{ WebkitTouchCallout: 'none' }}
+            className={`relative w-11 h-11 mb-1.5 mx-auto rounded-full focus:outline-none transition-transform active:scale-95 block ${selected ? 'ring-2 ring-[#5865F2]' : 'hover:ring-2 hover:ring-white/20'}`}
+            title={chat.name}
+            aria-label={`Открыть чат с ${chat.name}`}
+        >
+            <Avatar name={chat.name} src={chat.avatar || undefined} size={44} />
+            {online && (
+                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-[#17212b]" />
+            )}
+            {(chat.unreadCount ?? 0) > 0 && (
+                <span
+                    className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] px-1 flex items-center justify-center bg-gradient-to-br from-[#6d7cf6] to-[#4752c4] text-white text-[9px] font-semibold rounded-full border-2 border-[#17212b]"
+                    title={`${chat.unreadCount} непрочитанных`}
+                >
+                    {chat.unreadCount! > 9 ? '9+' : chat.unreadCount}
+                </span>
+            )}
+            {chat.pinned && (
+                <span className="absolute -top-1 -left-1 w-3.5 h-3.5 flex items-center justify-center bg-[#222d3d] rounded-full border border-white/10" title="Закреплён">
+                    <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" className="text-[#8ea1ff]">
+                        <path d="m12 22 1-2v-3h5a1 1 0 0 0 1-1v-1.586c0-.526-.214-1.042-.586-1.414L17 11.586V8a1 1 0 0 0 1-1V4c0-1.103-.897-2-2-2H8c-1.103 0-2 .897-2 2v3a1 1 0 0 0 1 1v3.586L5.586 13A2.01 2.01 0 0 0 5 14.414V16a1 1 0 0 0 1 1h5v3l1 2zM8 4h8v2H8V4zM7 14.414l1.707-1.707A.996.996 0 0 0 9 12V8h6v4c0 .266.105.52.293.707L17 14.414V15H7v-.586z" />
+                    </svg>
+                </span>
+            )}
+        </button>
+    );
+};
+
 const Sidebar: React.FC<{
     onSelectChat: (id: string, name?: string) => void;
     searchQuery: string;
@@ -38,6 +81,8 @@ const Sidebar: React.FC<{
     const [chats, setChats] = React.useState<Chat[]>([]);
     const [allUsers, setAllUsers] = React.useState<User[]>([]);
     const [debouncedSearchQuery] = useDebounce(searchQuery, 300);
+    // актуальный список онлайн-пользователей (по WS presence) — статусы в списке чатов
+    const [onlineIds, setOnlineIds] = React.useState<Set<string>>(new Set());
 
     const refreshChats = React.useCallback(async () => {
         try {
@@ -121,9 +166,19 @@ const Sidebar: React.FC<{
                 }
                 break;
             }
+            case 'presence:init': {
+                setOnlineIds(new Set(event.online));
+                break;
+            }
             case 'presence': {
                 const at = event.online ? new Date().toISOString() : event.at;
                 setChats((prev) => prev.map((c) => (c.id === event.userId ? { ...c, lastSeenAt: at } : c)));
+                setOnlineIds((prev) => {
+                    const next = new Set(prev);
+                    if (event.online) next.add(event.userId);
+                    else next.delete(event.userId);
+                    return next;
+                });
                 break;
             }
             default:
@@ -207,34 +262,14 @@ const Sidebar: React.FC<{
                 </div>
                 <div className="flex-1 overflow-y-auto px-2 pt-1 pb-2">
                     {chats.map(chat => (
-                        <button
+                        <CollapsedChatButton
                             key={chat.id}
-                            onClick={() => onSelectChat(chat.id, chat.name)}
-                            onContextMenu={(e) => { e.preventDefault(); setCollapsedMenu({ chat, x: e.clientX, y: e.clientY }); }}
-                            className={`relative w-11 h-11 mb-1.5 mx-auto rounded-full focus:outline-none transition-transform active:scale-95 block ${chat.id === selectedChatId ? 'ring-2 ring-[#5865F2]' : 'hover:ring-2 hover:ring-white/20'}`}
-                            title={chat.name}
-                            aria-label={`Открыть чат с ${chat.name}`}
-                        >
-                            <Avatar name={chat.name} src={chat.avatar || undefined} size={44} />
-                            {isUserOnline(chat.lastSeenAt) && (
-                                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-[#17212b]" />
-                            )}
-                            {(chat.unreadCount ?? 0) > 0 && (
-                                <span
-                                    className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] px-1 flex items-center justify-center bg-gradient-to-br from-[#6d7cf6] to-[#4752c4] text-white text-[9px] font-semibold rounded-full border-2 border-[#17212b]"
-                                    title={`${chat.unreadCount} непрочитанных`}
-                                >
-                                    {chat.unreadCount! > 9 ? '9+' : chat.unreadCount}
-                                </span>
-                            )}
-                            {chat.pinned && (
-                                <span className="absolute -top-1 -left-1 w-3.5 h-3.5 flex items-center justify-center bg-[#222d3d] rounded-full border border-white/10" title="Закреплён">
-                                    <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" className="text-[#8ea1ff]">
-                                        <path d="m12 22 1-2v-3h5a1 1 0 0 0 1-1v-1.586c0-.526-.214-1.042-.586-1.414L17 11.586V8a1 1 0 0 0 1-1V4c0-1.103-.897-2-2-2H8c-1.103 0-2 .897-2 2v3a1 1 0 0 0 1 1v3.586L5.586 13A2.01 2.01 0 0 0 5 14.414V16a1 1 0 0 0 1 1h5v3l1 2zM8 4h8v2H8V4zM7 14.414l1.707-1.707A.996.996 0 0 0 9 12V8h6v4c0 .266.105.52.293.707L17 14.414V15H7v-.586z" />
-                                    </svg>
-                                </span>
-                            )}
-                        </button>
+                            chat={chat}
+                            selected={chat.id === selectedChatId}
+                            online={onlineIds.has(chat.id) || (!wsConnected && isUserOnline(chat.lastSeenAt))}
+                            onSelect={() => onSelectChat(chat.id, chat.name)}
+                            onMenu={(c, pos) => setCollapsedMenu({ chat: c, x: pos.x, y: pos.y })}
+                        />
                     ))}
                 </div>
                 <div className="shrink-0 p-2 flex justify-center">
@@ -285,6 +320,8 @@ const Sidebar: React.FC<{
                 onTogglePin={handleTogglePin}
                 onDeleteChatPrompt={setChatToDelete}
                 onReorderPins={handleReorderPins}
+                onlineIds={onlineIds}
+                wsConnected={wsConnected}
             />
             <div className="mt-auto shrink-0">
                 <Profile compact={false} />

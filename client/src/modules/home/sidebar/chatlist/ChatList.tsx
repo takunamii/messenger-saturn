@@ -3,6 +3,7 @@ import type { Chat, User } from '../Sidebar';
 import Avatar from '../../../../components/Avatar';
 import ChatContextMenu from '../../../../components/ChatContextMenu';
 import { isUserOnline, formatChatTime } from '../../../../utils/formatLastSeen';
+import { useLongPress } from '../../../../utils/longPress';
 
 // иконка «закреплено» (Boxicons pin)
 const PinIcon: React.FC<{ className?: string; title?: string; size?: number }> = ({ className = '', title, size = 12 }) => (
@@ -22,11 +23,16 @@ interface ChatListProps {
     onTogglePin?: (chat: Chat) => void;
     onDeleteChatPrompt?: (chat: Chat) => void;
     onReorderPins?: (order: string[]) => void;
+    onlineIds?: Set<string>;
+    wsConnected?: boolean;
 }
 
-const ChatList: React.FC<ChatListProps> = ({ chats, allUsers, onSelectChat, searchQuery, selectedChatId, onTogglePin, onDeleteChatPrompt, onReorderPins }) => {
+const ChatList: React.FC<ChatListProps> = ({ chats, allUsers, onSelectChat, searchQuery, selectedChatId, onTogglePin, onDeleteChatPrompt, onReorderPins, onlineIds, wsConnected = true }) => {
     const [menu, setMenu] = React.useState<{ chat: Chat; x: number; y: number } | null>(null);
     const [dragId, setDragId] = React.useState<string | null>(null);
+
+    // онлайн по WS presence; если WS нет — fallback по времени последней активности
+    const isChatOnline = (chat: Chat) => (onlineIds ? onlineIds.has(chat.id) : false) || (!wsConnected && isUserOnline(chat.lastSeenAt));
 
     // Фильтрация существующих чатов по поисковому запросу (по name)
     const filteredChats = searchQuery
@@ -53,14 +59,19 @@ const ChatList: React.FC<ChatListProps> = ({ chats, allUsers, onSelectChat, sear
             active ? 'bg-[#5865F2] text-white' : 'hover:bg-white/5'
         }`;
 
-    const Row: React.FC<{ chat: Chat; draggable: boolean }> = ({ chat, draggable }) => (
+    const Row: React.FC<{ chat: Chat; draggable: boolean }> = ({ chat, draggable }) => {
+        // долгое нажатие (мобильные) — контекст-меню чата вместо ПКМ
+        const longPress = useLongPress((pos) => setMenu({ chat, x: pos.x, y: pos.y }));
+        return (
         <div
-            onClick={() => onSelectChat(chat.id, chat.name)}
+            onClick={() => { if (longPress.didFire()) return; onSelectChat(chat.id, chat.name); }}
             onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 setMenu({ chat, x: e.clientX, y: e.clientY });
             }}
+            {...longPress}
+            style={{ WebkitTouchCallout: 'none' }}
             draggable={draggable}
             onDragStart={(e) => {
                 if (!draggable) return;
@@ -87,7 +98,7 @@ const ChatList: React.FC<ChatListProps> = ({ chats, allUsers, onSelectChat, sear
         >
             <div className="relative shrink-0">
                 <Avatar name={chat.name} src={chat.avatar || undefined} size={46} />
-                {isUserOnline(chat.lastSeenAt) && (
+                {isChatOnline(chat) && (
                     <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 border-2 border-[#17212b]" title="онлайн" />
                 )}
             </div>
@@ -131,7 +142,8 @@ const ChatList: React.FC<ChatListProps> = ({ chats, allUsers, onSelectChat, sear
                 )}
             </div>
         </div>
-    );
+        );
+    };
 
     return (
         <div className="flex-1 overflow-y-auto px-2 pt-1 pb-4">
